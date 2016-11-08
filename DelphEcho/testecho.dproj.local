@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+	<Transactions>
+    <Transaction>1899-12-30 00:00:00.000.842,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.321,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.663,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.973,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.543,D:\Documents\Embarcadero\Studio\Projects\Unit1.dfm=F:\pargram\go\src\DxFileServer\src\DelphiClient\Unit1.dfm</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.527,F:\pargram\go\src\DxFileServer\src\DelphiClient\testecho.dproj=F:\pargram\go\src\DxFileServer\src\DelphiClient\Project1.dproj</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.986,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.403,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.312,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.013,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.950,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.027,D:\Documents\Embarcadero\Studio\Projects\Project1.dproj=F:\pargram\go\src\DxFileServer\src\DelphiClient\Project1.dproj</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.341,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.846,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.694,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.160,=D:\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899-12-30 00:00:00.000.543,D:\Documents\Embarcadero\Studio\Projects\Unit1.pas=F:\pargram\go\src\DxFileServer\src\DelphiClient\Unit1.pas</Transaction>
+  </Transactions>
+</BorlandProject>
