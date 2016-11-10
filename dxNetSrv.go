@@ -202,7 +202,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		if err := coder.Encode(DataObj,buf);err==nil{
 			retbytes = buf.Bytes()
 			buflen := bytes.NewBuffer(retbytes[0:0])
-			objbuflen := buf.Len() - 2
+			objbuflen := buf.Len() - headLen
 			binary.Write(buflen,binary.BigEndian,uint16(objbuflen))
 			buflen = nil
 			lenb := len(retbytes)
