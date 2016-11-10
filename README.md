@@ -65,11 +65,10 @@ func main(){
 ```go
 func (coder *JsonCoder)Decode(bytes []byte)(result interface{},ok bool)  {
 	decoder := json.NewDecoder(buf)
-  jsonpkg := new(JSONPKG)
-	ok = decoder.Decode(methodpkg)==nil
-  ok = decoder.Decode(methodpkg)==nil
+  	jsonpkg := new(JSONPKG)
+	ok = decoder.Decode(jsonpkg)==nil
 	if ok{
-		result = methodpkg
+		result = jsonpkg
 	}else{
 		result = nil
 	}
