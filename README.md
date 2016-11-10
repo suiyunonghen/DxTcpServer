@@ -68,7 +68,8 @@ func main(){
 ```
 以上的编码器是直接将发送的内容返回写入到了Buf中了，如果是其他的格式，比如，如果是Json，那么编码器的编码函数可以写为
 ```go
-func (coder *JsonCoder)Decode(bytes []byte)(result interface{},ok bool)  {
+func (coder *JsonCoder)Decode(pkgbytes []byte)(result interface{},ok bool)  {
+	buf := bytes.NewReader(pkgbytes[:])
 	decoder := json.NewDecoder(buf)
   	jsonpkg := new(JSONPKG)
 	ok = decoder.Decode(jsonpkg)==nil
