@@ -3,6 +3,7 @@ package dxserver
 import (
 	"net"
 	"encoding/binary"
+	"bytes"
 	"time"
 )
 
@@ -21,7 +22,7 @@ type IConHost interface {
 
 //编码器
 type IConCoder interface {
-	Encode(obj interface{})(bytes []byte,ok bool) //编码对象
+	Encode(obj interface{},buf *bytes.Buffer) error //编码对象
 	Decode(bytes []byte)(result interface{},ok bool) //解码数据到对应的对象
 	HeadBufferLen()uint16  //编码器的包头大小
 	MaxBufferLen()uint16 //允许的最大缓存

@@ -1,25 +1,17 @@
 package EchoDemo
 
 import (
-	"encoding/binary"
-	"DxFileServer/src/dxserver"
+	"suiyunonghen/DxTcpServer"
+	"bytes"
 )
 
 type EchoCoder struct {
 
 }
 
-func (coder *EchoCoder)Encode(obj interface{})(bytes []byte,ok bool)  {
-	l := uint32(len(obj.([]byte)))
-	headlen := coder.HeadBufferLen()
-	bytes = make([]byte,headlen)
-	if headlen <3{
-		binary.BigEndian.PutUint16(bytes[:headlen],uint16(l))
-	}else{
-		binary.BigEndian.PutUint32(bytes[:headlen],l)
-	}
-	bytes = append(bytes,obj.([]byte)...)
-	return bytes,true
+func (coder *EchoCoder)Encode(obj interface{},buf *bytes.Buffer) error  {
+	buf.Write(obj.([]byte))
+	return nil
 }
 
 func (coder *EchoCoder)Decode(bytes []byte)(result interface{},ok bool)  {
@@ -31,7 +23,7 @@ func (coder *EchoCoder)HeadBufferLen()uint16  {
 }
 
 func (coder *EchoCoder)MaxBufferLen()uint16  {
-	return 256
+	return 1024
 }
 
 func NewEchoServer()*dxserver.DxTcpServer{

@@ -5,6 +5,8 @@ import (
 	"time"
 	"sync/atomic"
 	"unsafe"
+	"bytes"
+	"encoding/binary"
 	"sync"
 	"fmt"
 )
@@ -116,6 +118,7 @@ type DxTcpServer struct {
 	LimitSendPkgCount	uint8  //每个连接限制的发送包的个数，防止发送过快
 	SendDataSize	 DxDiskSize
 	RecvDataSize	DxDiskSize
+	sendBuffer	[]byte
 	sync.RWMutex
 }
 type GIterateClientFunc func(con *DxNetConnection)
@@ -189,16 +192,29 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 	sendok := false
 	var haswrite int = 0
 	if coder!=nil{
-		if bytes,ok := coder.Encode(DataObj);ok{
-			lb := len(bytes)
+		var retbytes []byte
+		if srv.sendBuffer == nil{
+			srv.sendBuffer = make([]byte,coder.MaxBufferLen())
+		}
+		retbytes = srv.sendBuffer[0:2]
+		headLen := coder.HeadBufferLen()
+		buf := bytes.NewBuffer(retbytes[:headLen])
+		if err := coder.Encode(DataObj,buf);err==nil{
+			retbytes = buf.Bytes()
+			buflen := bytes.NewBuffer(retbytes[0:0])
+			objbuflen := buf.Len() - 2
+			binary.Write(buflen,binary.BigEndian,uint16(objbuflen))
+			buflen = nil
+			lenb := len(retbytes)
+			buf = nil
 			for {
 				con.LastValidTime = time.Now()
-				if wln,err := con.con.Write(bytes[haswrite:lb]);err != nil{
+				if wln,err := con.con.Write(retbytes[haswrite:lenb]);err != nil{
 					con.Close()
 					break
 				}else{
 					haswrite+=wln
-					if haswrite == lb{
+					if haswrite == lenb{
 						sendok =true
 						break
 					}
@@ -206,9 +222,9 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			}
 			//写入发送了多少数据
 			con.LastValidTime = time.Now()
-			con.SendDataLen.AddByteSize(uint32(lb))
+			con.SendDataLen.AddByteSize(uint32(lenb))
 			srv.Lock()
-			srv.SendDataSize.AddByteSize(uint32(lb))
+			srv.SendDataSize.AddByteSize(uint32(lenb))
 			srv.Unlock()
 		}
 	}
