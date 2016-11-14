@@ -118,7 +118,8 @@ type DxTcpServer struct {
 	LimitSendPkgCount	uint8  //每个连接限制的发送包的个数，防止发送过快
 	SendDataSize	 DxDiskSize
 	RecvDataSize	DxDiskSize
-	sendBuffer	[]byte
+	MaxDataBufCount	uint16		//最大缓存数量
+	dataBuffer	chan[]byte   //缓存列表
 	sync.RWMutex
 }
 type GIterateClientFunc func(con *DxNetConnection)
@@ -187,24 +188,53 @@ func (srv *DxTcpServer)HandleDisConnectEvent(con *DxNetConnection) {
 	}
 }
 
+func (srv *DxTcpServer)GetBuffer()(retbuf []byte)  {
+	var ok bool
+	if srv.dataBuffer != nil{
+		select{
+		case retbuf,ok = <-srv.dataBuffer:
+			if !ok{
+				retbuf = make([]byte,srv.encoder.MaxBufferLen())
+			}
+		default:
+			retbuf = make([]byte,srv.encoder.MaxBufferLen())
+		}
+	}else if srv.dataBuffer == nil && srv.MaxDataBufCount != 0{
+		srv.dataBuffer = make(chan []byte,srv.MaxDataBufCount)
+		retbuf = make([]byte,srv.encoder.MaxBufferLen())
+	}else{
+		retbuf = make([]byte,srv.encoder.MaxBufferLen())
+	}
+	return
+}
+
+func (srv *DxTcpServer)ReciveBuffer(buf []byte)bool  {
+	if srv.dataBuffer != nil{
+		select{
+		case srv.dataBuffer <- buf:
+			return true
+		case <-time.After(time.Second * 5):
+			//回收失败
+			return false
+		}
+	}
+	return false
+}
+
 func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 	coder := srv.encoder
 	sendok := false
 	var haswrite int = 0
 	if coder!=nil{
 		var retbytes []byte
-		if srv.sendBuffer == nil{
-			srv.sendBuffer = make([]byte,coder.MaxBufferLen())
-		}
-		retbytes = srv.sendBuffer[0:2]
+		sendBuffer := srv.GetBuffer()
 		headLen := coder.HeadBufferLen()
+		retbytes = sendBuffer[0:headLen]
 		buf := bytes.NewBuffer(retbytes[:headLen])
 		if err := coder.Encode(DataObj,buf);err==nil{
 			retbytes = buf.Bytes()
-			buflen := bytes.NewBuffer(retbytes[0:0])
-			objbuflen := buf.Len() - headLen
-			binary.Write(buflen,binary.BigEndian,uint16(objbuflen))
-			buflen = nil
+			objbuflen := uint16(buf.Len()) - headLen
+			binary.BigEndian.PutUint16(retbytes[0:headLen],uint16(objbuflen))
 			lenb := len(retbytes)
 			buf = nil
 			for {
@@ -227,6 +257,8 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			srv.SendDataSize.AddByteSize(uint32(lenb))
 			srv.Unlock()
 		}
+		srv.ReciveBuffer(sendBuffer)//回收
+		sendBuffer = nil
 	}
 	if srv.OnSendData != nil{
 		srv.OnSendData(con,DataObj,haswrite,sendok)

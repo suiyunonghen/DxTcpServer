@@ -48,7 +48,6 @@ type DxNetConnection struct {
 	sendDataQueue      chan *DataPackage
 	recvDataQueue	chan *DataPackage
 	LimitSendPkgCout uint8
-	DataBuffer	[]byte
 }
 
 //连接运行
@@ -71,6 +70,7 @@ func (con *DxNetConnection)connectionRun()  {
 }
 
 func (con *DxNetConnection)checkHeartorSendData()  {
+	heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
 	checkfor:
 	for{
 		select {
@@ -87,7 +87,7 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 		case <-con.conDisconnect:
 			break checkfor
 		case <-time.After(time.Millisecond * 300):
-			if con.conHost.HeartTimeOutSeconds() == 0 && con.conHost.EnableHeartCheck() &&
+			if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
 				go con.Close()
 			}
@@ -201,7 +201,7 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 			{
 				return true
 			}
-		case <-time.After(time.Second * 5):
+		case <-time.After(time.Millisecond * 100)://等100毫秒
 			{
 				con.Close()
 				return false
