@@ -11,11 +11,12 @@ import (
 )
 var (
 	srv	*dxserver.DxTcpServer
+	client *dxserver.DxTcpClient
 )
 func main() {
 	app := controls.NewApplication()
 	srv = EchoDemo.NewEchoServer()
-
+	client = EchoDemo.NewEchoClient()
 	app.ShowMainForm = false
 	mainForm := app.CreateForm()
 	PopMenu := NVisbleControls.NewPopupMenu(mainForm)
@@ -32,6 +33,15 @@ func main() {
 		srv.Close()
 		mainForm.Close()
 	}
+
+	mItem = PopMenu.Items().AddItem("发送Echo消息")
+	mItem.OnClick = func(sender interface{}) {
+		if !client.Active{
+			client.Connect("127.0.0.1:8340")
+		}
+		client.SendData(&client.Clientcon,"测试不得闲")
+	}
+
 	trayicon := NVisbleControls.NewTrayIcon(mainForm)
 	trayicon.PopupMenu = PopMenu
 	trayicon.SetVisible(true)

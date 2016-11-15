@@ -188,6 +188,10 @@ func (srv *DxTcpServer)HandleDisConnectEvent(con *DxNetConnection) {
 	}
 }
 
+func (srv *DxTcpServer)SendHeart(con *DxNetConnection)  {
+
+}
+
 func (srv *DxTcpServer)GetBuffer()(retbuf []byte)  {
 	var ok bool
 	if srv.dataBuffer != nil{

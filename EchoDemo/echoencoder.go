@@ -1,25 +1,23 @@
 package EchoDemo
 
 import (
-	"encoding/binary"
-	"DxFileServer/src/dxserver"
+	"suiyunonghen/DxTcpServer"
+	"bytes"
+	"fmt"
 )
 
 type EchoCoder struct {
 
 }
 
-func (coder *EchoCoder)Encode(obj interface{})(bytes []byte,ok bool)  {
-	l := uint32(len(obj.([]byte)))
-	headlen := coder.HeadBufferLen()
-	bytes = make([]byte,headlen)
-	if headlen <3{
-		binary.BigEndian.PutUint16(bytes[:headlen],uint16(l))
-	}else{
-		binary.BigEndian.PutUint32(bytes[:headlen],l)
+func (coder *EchoCoder)Encode(obj interface{},buf *bytes.Buffer) error  {
+	switch obj.(type) {
+	case []byte:
+		buf.Write(obj.([]byte))
+	case string:
+		buf.Write([]byte(obj.(string)))
 	}
-	bytes = append(bytes,obj.([]byte)...)
-	return bytes,true
+	return nil
 }
 
 func (coder *EchoCoder)Decode(bytes []byte)(result interface{},ok bool)  {
@@ -31,7 +29,7 @@ func (coder *EchoCoder)HeadBufferLen()uint16  {
 }
 
 func (coder *EchoCoder)MaxBufferLen()uint16  {
-	return 256
+	return 1024
 }
 
 func NewEchoServer()*dxserver.DxTcpServer{
@@ -48,4 +46,14 @@ func NewEchoServer()*dxserver.DxTcpServer{
 		fmt.Println("登录客户",srv.ClientCount())
 	}*/
 	return srv
+}
+
+func NewEchoClient()*dxserver.DxTcpClient  {
+	client := new(dxserver.DxTcpClient)
+	coder := new(EchoCoder)
+	client.SetCoder(coder)
+	client.OnRecvData = func(con *dxserver.DxNetConnection,recvData interface{}) {
+		fmt.Println(string(recvData.([]byte)))
+	}
+	return client
 }

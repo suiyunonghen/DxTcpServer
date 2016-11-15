@@ -17,6 +17,7 @@ type IConHost interface {
 	HandleConnectEvent(con *DxNetConnection)
 	HeartTimeOutSeconds() int32 //设定的心跳间隔超时响应时间
 	EnableHeartCheck() bool //是否启用心跳检查
+	SendHeart(con *DxNetConnection) //发送心跳
 	SendData(con *DxNetConnection,DataObj interface{})bool
 }
 
@@ -48,6 +49,7 @@ type DxNetConnection struct {
 	sendDataQueue      chan *DataPackage
 	recvDataQueue	chan *DataPackage
 	LimitSendPkgCout uint8
+	IsClientcon	bool
 }
 
 //连接运行
@@ -87,7 +89,12 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 		case <-con.conDisconnect:
 			break checkfor
 		case <-time.After(time.Millisecond * 300):
-			if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
+			if con.IsClientcon{ //客户端连接
+				if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
+					time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
+					con.conHost.SendHeart(con)
+				}
+			}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
 				go con.Close()
 			}
