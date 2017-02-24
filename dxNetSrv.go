@@ -256,7 +256,6 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			}
 			//写入发送了多少数据
 			con.LastValidTime = time.Now()
-			con.SendDataLen.AddByteSize(uint32(lenb))
 			srv.Lock()
 			srv.SendDataSize.AddByteSize(uint32(lenb))
 			srv.Unlock()
