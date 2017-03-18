@@ -37,19 +37,28 @@ type DataPackage struct {
 
 type DxNetConnection struct {
 	con net.Conn
-	localAddr           string
-	remoteAddr          string
-	conHost	    	    IConHost  //连接宿主
-	LastValidTime	    time.Time //最后一次有效数据处理时间
-	LoginTime	    time.Time //登录时间
-	ConHandle	    uint
-	conDisconnect	    chan bool
-	SendDataLen	DxDiskSize
-	ReciveDataLen	DxDiskSize
-	sendDataQueue      chan *DataPackage
-	recvDataQueue	chan *DataPackage
-	LimitSendPkgCout uint8
-	IsClientcon	bool
+	localAddr	            string
+	remoteAddr	            string
+	conHost		    	    IConHost  //连接宿主
+	LastValidTime		    time.Time //最后一次有效数据处理时间
+	LoginTime		    time.Time //登录时间
+	ConHandle		    uint
+	conDisconnect		    chan struct{}
+	SendDataLen		    DxDiskSize
+	ReciveDataLen		    DxDiskSize
+	sendDataQueue	      	    chan *DataPackage
+	recvDataQueue		    chan *DataPackage
+	LimitSendPkgCout	    uint8
+	IsClientcon		    bool
+	useData			    interface{} //用户数据
+}
+
+func (con *DxNetConnection)SetUseData(v interface{})  {
+	con.useData = v
+}
+
+func (con *DxNetConnection)GetUseData()interface{}  {
+	return con.useData
 }
 
 //连接运行
@@ -64,7 +73,7 @@ func (con *DxNetConnection)connectionRun()  {
 	}
 	con.recvDataQueue = make(chan *DataPackage,5)
 	//心跳或发送数据
-	con.conDisconnect = make(chan bool)
+	con.conDisconnect = make(chan struct{})
 	go con.checkHeartorSendData()
 	//开始进入获取数据信息
 	con.LastValidTime = time.Now()
@@ -105,7 +114,7 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 
 func (con *DxNetConnection)Close()  {
 	if con.conDisconnect !=nil{
-		con.conDisconnect<-true
+		con.conDisconnect<- struct{}{}
 	}
 	con.con.Close()
 	con.conHost.HandleDisConnectEvent(con)

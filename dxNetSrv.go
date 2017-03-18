@@ -181,6 +181,7 @@ func (srv *DxTcpServer)acceptClients()  {
 
 func (srv *DxTcpServer)HandleDisConnectEvent(con *DxNetConnection) {
 	srv.Lock()
+	con.SetUseData(nil)
 	delete(srv.clients,con.ConHandle)
 	srv.Unlock()
 	if srv.OnClientDisConnected != nil{
