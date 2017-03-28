@@ -180,13 +180,13 @@ func (srv *DxTcpServer)acceptClients()  {
 }
 
 func (srv *DxTcpServer)HandleDisConnectEvent(con *DxNetConnection) {
+	if srv.OnClientDisConnected != nil{
+		srv.OnClientDisConnected(con)
+	}
 	srv.Lock()
 	con.SetUseData(nil)
 	delete(srv.clients,con.ConHandle)
 	srv.Unlock()
-	if srv.OnClientDisConnected != nil{
-		srv.OnClientDisConnected(con)
-	}
 }
 
 func (srv *DxTcpServer)SendHeart(con *DxNetConnection)  {
@@ -218,7 +218,7 @@ func (srv *DxTcpServer)ReciveBuffer(buf []byte)bool  {
 		select{
 		case srv.dataBuffer <- buf:
 			return true
-		case <-time.After(time.Second * 5):
+		case <-After(time.Second * 5):
 			//回收失败
 			return false
 		}

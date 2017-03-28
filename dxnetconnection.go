@@ -97,7 +97,7 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 		case <-con.conDisconnect:
 			break checkfor
-		case <-time.After(time.Millisecond * 300):
+		case <-After(time.Second):
 			if con.IsClientcon{ //客户端连接
 				if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 					time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
@@ -217,7 +217,7 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 			{
 				return true
 			}
-		case <-time.After(time.Millisecond * 100)://等100毫秒
+		case <-After(time.Second):
 			{
 				con.Close()
 				return false
