@@ -48,7 +48,9 @@ func (worker *TimeWheelWorker)run()  {
 			worker.timeslocks[worker.curindex] = make(chan struct{})
 			worker.curindex = (worker.curindex + 1) % worker.slockcount
 			worker.Unlock()
-			close(lastC)
+			if lastC != nil{
+				close(lastC)
+			}
 		case <-worker.quitchan:
 			worker.ticker.Stop()
 			return

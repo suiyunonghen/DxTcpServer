@@ -101,11 +101,24 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 			if con.IsClientcon{ //客户端连接
 				if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 					time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
+					if con.conDisconnect != nil{
+						select {
+						case <-con.conDisconnect:
+							return
+						}
+					}
 					con.conHost.SendHeart(con)
 				}
 			}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
-				go con.Close()
+				if con.conDisconnect != nil{
+					select {
+					case <-con.conDisconnect:
+						return
+					}
+				}
+				con.Close()
+				return
 			}
 		}
 	}
@@ -114,7 +127,7 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 
 func (con *DxNetConnection)Close()  {
 	if con.conDisconnect !=nil{
-		con.conDisconnect<- struct{}{}
+		close(con.conDisconnect)
 	}
 	con.con.Close()
 	con.conHost.HandleDisConnectEvent(con)
@@ -217,7 +230,7 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 			{
 				return true
 			}
-		case <-After(time.Second):
+		case <-After(time.Millisecond*500):
 			{
 				con.Close()
 				return false
