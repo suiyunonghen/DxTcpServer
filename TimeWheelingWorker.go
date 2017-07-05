@@ -1,4 +1,4 @@
-package dxserver
+package DxTcpServer
 
 import(
 	"time"
