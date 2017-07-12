@@ -8,6 +8,7 @@ import(
 	"fmt"
 	"strings"
 	"io/ioutil"
+	"io"
 	"path/filepath"
 )
 
@@ -25,14 +26,18 @@ type(
 
 func (loggerWriter *BufferLoggerWriter)Write(p []byte) (n int, err error)  {
 	//通知有数据到来
-	mp := loggerWriter.getBuffer(len(p))
-	copy(mp,p)
-	loggerWriter.datachan <- mp //通知数据到来
-	return len(p),nil
+	if loggerWriter.datachan!=nil{
+		mp := loggerWriter.getBuffer(len(p))
+		copy(mp,p)
+		loggerWriter.datachan <- mp //通知数据到来
+		return len(p),nil
+	}
+	return 0,io.EOF
 }
 
 func (loggerWriter *BufferLoggerWriter)QuitWriter(){
 	close(loggerWriter.datachan)
+	loggerWriter.datachan = nil
 	if loggerWriter.bufferchan!=nil{
 		close(loggerWriter.bufferchan)
 	}
