@@ -12,7 +12,7 @@ type GConnectEvent func(con *DxNetConnection)
 type GOnSendDataEvent func(con *DxNetConnection,Data interface{},sendlen int,sendok bool)
 type IConHost interface {
 	GetCoder()IConCoder //编码器
-	HandleRecvEvent(netcon *DxNetConnection,recvData interface{},recvDataLen uint16) //回收事件
+	HandleRecvEvent(netcon *DxNetConnection,recvData interface{},recvDataLen uint32) //回收事件
 	HandleDisConnectEvent(con *DxNetConnection)
 	HandleConnectEvent(con *DxNetConnection)
 	HeartTimeOutSeconds() int32 //设定的心跳间隔超时响应时间
@@ -27,12 +27,13 @@ type IConCoder interface {
 	Decode(bytes []byte)(result interface{},ok bool) //解码数据到对应的对象
 	HeadBufferLen()uint16  //编码器的包头大小
 	MaxBufferLen()uint16 //允许的最大缓存
+	UseLitterEndian()bool //是否采用小结尾端
 }
 
 
 type DataPackage struct {
 	PkgObject interface{}
-	pkglen	uint16
+	pkglen	uint32
 }
 
 type DxNetConnection struct {
@@ -146,12 +147,14 @@ func (con *DxNetConnection)conRead()  {
 		return
 	}
 	pkgHeadLen := encoder.HeadBufferLen() //包头长度
-	if pkgHeadLen < 2 {
+	if pkgHeadLen <= 2 {
 		pkgHeadLen = 2
+	}else{
+		pkgHeadLen = 4
 	}
 	maxbuflen := encoder.MaxBufferLen()
 	buf := make([]byte, maxbuflen)
-	var ln,lastReadBufLen uint16=0,0
+	var ln,lastReadBufLen uint32=0,0
 	var rln,lastread int
 	var err error
 	var readbuf,tmpBuffer []byte
@@ -164,12 +167,20 @@ func (con *DxNetConnection)conRead()  {
 			return
 		}
 		if rln < 3{
-			ln = binary.BigEndian.Uint16(buf[:rln])
+			if encoder.UseLitterEndian(){
+				ln = uint32(binary.LittleEndian.Uint16(buf[:rln]))
+			}else{
+				ln = uint32(binary.BigEndian.Uint16(buf[:rln]))
+			}
 		}else{
-			ln = uint16(binary.BigEndian.Uint32(buf[:rln]))
+			if encoder.UseLitterEndian(){
+				ln = binary.LittleEndian.Uint32(buf[:rln])
+			}else{
+				ln = binary.BigEndian.Uint32(buf[:rln])
+			}
 		}
-		pkglen := uint16(ln)//包长度
-		if pkglen > maxbuflen{
+		pkglen := ln//包长度
+		if pkglen > uint32(maxbuflen){
 			if lastReadBufLen < pkglen{
 				tmpBuffer = make([]byte,pkglen)
 			}
@@ -189,7 +200,7 @@ func (con *DxNetConnection)conRead()  {
 					return
 				}
 				lastread += rln
-				if uint16(lastread) >= pkglen {
+				if uint32(lastread) >= pkglen {
 					break
 				}
 			}

@@ -78,7 +78,7 @@ func (client *DxTcpClient)SendHeart(con *DxNetConnection)  {
 	}
 }
 
-func (client *DxTcpClient)HandleRecvEvent(con *DxNetConnection,recvData interface{},recvDataLen uint16)  {
+func (client *DxTcpClient)HandleRecvEvent(con *DxNetConnection,recvData interface{},recvDataLen uint32)  {
 	if client.OnRecvData!=nil{
 		client.OnRecvData(con,recvData)
 	}
@@ -106,12 +106,28 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 			client.sendBuffer = make([]byte,coder.MaxBufferLen())
 		}
 		headLen := coder.HeadBufferLen()
+		if headLen > 2{
+			headLen = 4
+		}
 		retbytes = client.sendBuffer[0:headLen]
 		buf := bytes.NewBuffer(retbytes[:headLen])
 		if err := coder.Encode(DataObj,buf);err==nil{
 			retbytes = buf.Bytes()
-			objbuflen := uint16(buf.Len()) - headLen
-			binary.BigEndian.PutUint16(retbytes[0:headLen],uint16(objbuflen))
+			if headLen <= 2{
+				objbuflen := uint16(buf.Len()) - headLen
+				if coder.UseLitterEndian(){
+					binary.LittleEndian.PutUint16(retbytes[0:headLen],objbuflen)
+				}else{
+					binary.BigEndian.PutUint16(retbytes[0:headLen],objbuflen)
+				}
+			}else{
+				objbuflen := uint32(buf.Len()) - uint32(headLen)
+				if coder.UseLitterEndian(){
+					binary.LittleEndian.PutUint32(retbytes[0:headLen],objbuflen)
+				}else{
+					binary.BigEndian.PutUint32(retbytes[0:headLen],objbuflen)
+				}
+			}
 			lenb := len(retbytes)
 			buf = nil
 			for {
