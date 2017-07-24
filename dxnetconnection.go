@@ -93,37 +93,36 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 				break checkfor
 			}
 			con.conHost.SendData(con,data.PkgObject)
-		case <-con.conDisconnect:
-			break checkfor
-		case <-After(time.Second):
-			if con.IsClientcon{ //客户端连接
-				if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
-					time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
-					if con.conDisconnect != nil{
-						select {
-						case <-con.conDisconnect:
-							return
-						}
-					}
-					if con.IsClientcon{
-						con.conHost.SendHeart(con)
-					}
-				}
-			}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
-				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
-				con.Close()
-				return
+		case data,ok := <-con.recvDataQueue:
+			if !ok || data.PkgObject == nil{
+				break checkfor
 			}
+			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 		default:
 			select {
-			case data,ok := <-con.recvDataQueue:
-				if !ok || data.PkgObject == nil{
-					break checkfor
+			case <-con.conDisconnect:
+				break checkfor
+			case <-After(time.Second):
+				if con.IsClientcon{ //客户端连接
+					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
+						time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
+						if con.conDisconnect != nil{
+							select {
+							case <-con.conDisconnect:
+								return
+							}
+						}
+						if con.IsClientcon{
+							con.conHost.SendHeart(con)
+						}
+					}
+				}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
+					time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
+					con.Close()
+					return
 				}
-				/*fmt.Println("接收到数据包checkHeartorSendData")
-				fmt.Println(data.PkgObject)
-				fmt.Println(len(con.recvDataQueue))*/
-				con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
+			default:
+				//什么都不做，碰到没信号的，就继续下一轮循环处理
 			}
 		}
 	}
