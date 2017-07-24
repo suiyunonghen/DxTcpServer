@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"bytes"
 	"time"
+	//"fmt"
 )
 
 type GOnRecvDataEvent func(con *DxNetConnection,recvData interface{})
@@ -45,6 +46,7 @@ type DxNetConnection struct {
 	LoginTime		    time.Time //登录时间
 	ConHandle		    uint
 	conDisconnect		    chan struct{}
+	unActive				bool //已经关闭了
 	SendDataLen		    DxDiskSize
 	ReciveDataLen		    DxDiskSize
 	sendDataQueue	      	    chan *DataPackage
@@ -91,11 +93,6 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 				break checkfor
 			}
 			con.conHost.SendData(con,data.PkgObject)
-		case data,ok := <-con.recvDataQueue:
-			if !ok || data.PkgObject == nil{
-				break checkfor
-			}
-			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 		case <-con.conDisconnect:
 			break checkfor
 		case <-After(time.Second):
@@ -121,17 +118,33 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 				con.Close()
 				return
 			}
+		default:
+			select {
+			case data,ok := <-con.recvDataQueue:
+				if !ok || data.PkgObject == nil{
+					break checkfor
+				}
+				/*fmt.Println("接收到数据包checkHeartorSendData")
+				fmt.Println(data.PkgObject)
+				fmt.Println(len(con.recvDataQueue))*/
+				con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
+			}
 		}
 	}
 }
 
 
 func (con *DxNetConnection)Close()  {
+	if con.unActive{
+		return
+	}
 	if con.conDisconnect !=nil{
 		close(con.conDisconnect)
+		con.conDisconnect = nil
 	}
 	con.con.Close()
 	con.conHost.HandleDisConnectEvent(con)
+	con.unActive = true
 }
 
 func (con *DxNetConnection)conRead()  {
@@ -204,11 +217,17 @@ func (con *DxNetConnection)conRead()  {
 					break
 				}
 			}
+			/*fmt.Println("接收到数据")
+			fmt.Println(readbuf[:pkglen])*/
 			//读取成功，解码数据
 			if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
 				pkg := new(DataPackage)
 				pkg.PkgObject = obj
 				pkg.pkglen = pkglen
+				/*fmt.Println("接收到数据包并解码成功")
+				fmt.Println(obj)
+				fmt.Println(len(con.recvDataQueue))*/
+
 				con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
 			}else{
 				con.Close()//无效的数据包

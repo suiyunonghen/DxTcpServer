@@ -164,6 +164,7 @@ func (srv *DxTcpServer)acceptClients()  {
 		}
 		dxcon := new(DxNetConnection)
 		dxcon.con = conn
+		dxcon.unActive = false
 		dxcon.LimitSendPkgCout = srv.LimitSendPkgCount
 		dxcon.LoginTime = time.Now() //登录时间
 		dxcon.ConHandle = uint(uintptr(unsafe.Pointer(dxcon)))
@@ -236,27 +237,32 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		headLen := coder.HeadBufferLen()
 		if headLen > 2{
 			headLen = 4
+		}else{
+			headLen = 2
 		}
 		retbytes = sendBuffer[0:headLen]
-		buf := bytes.NewBuffer(retbytes[:headLen])
+		buf := bytes.NewBuffer(sendBuffer[headLen:headLen])
 		if err := coder.Encode(DataObj,buf);err==nil{
-			retbytes = buf.Bytes()
+			lenb := int(headLen)
 			if headLen <= 2{
-				objbuflen := uint16(buf.Len()) - headLen
+				objbuflen := uint16(buf.Len())
+				lenb += int(objbuflen)//实际的对象长度
 				if coder.UseLitterEndian(){
-					binary.LittleEndian.PutUint16(retbytes[0:headLen],objbuflen)
+					binary.LittleEndian.PutUint16(retbytes,objbuflen)
 				}else{
-					binary.BigEndian.PutUint16(retbytes[0:headLen],objbuflen)
+					binary.BigEndian.PutUint16(retbytes,objbuflen)
 				}
 			}else{
-				objbuflen := uint32(buf.Len()) - uint32(headLen)
+				objbuflen := uint32(buf.Len())
+				lenb += int(objbuflen)
 				if coder.UseLitterEndian(){
-					binary.LittleEndian.PutUint32(retbytes[0:headLen],objbuflen)
+					binary.LittleEndian.PutUint32(retbytes,objbuflen)
 				}else{
-					binary.BigEndian.PutUint32(retbytes[0:headLen],objbuflen)
+					binary.BigEndian.PutUint32(retbytes,objbuflen)
 				}
 			}
-			lenb := len(retbytes)
+			retbytes = sendBuffer[0:lenb]//实际要发送的数据内容
+			//fmt.Println(retbytes)
 			buf = nil
 			for {
 				con.LastValidTime = time.Now()
@@ -276,6 +282,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			srv.Lock()
 			srv.SendDataSize.AddByteSize(uint32(lenb))
 			srv.Unlock()
+			//fmt.Println("发送成功！")
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
 		sendBuffer = nil

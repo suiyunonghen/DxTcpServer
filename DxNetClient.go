@@ -27,6 +27,7 @@ func (client *DxTcpClient)Connect(addr string)error {
 	}
 	if tcpAddr, err := net.ResolveTCPAddr("tcp4", addr);err == nil{
 		if conn, err := net.DialTCP("tcp", nil, tcpAddr);err == nil{ //创建一个TCP连接:TCPConn
+			client.Clientcon.unActive = false
 			client.Clientcon.con = conn
 			client.Clientcon.LoginTime = time.Now() //登录时间
 			client.Clientcon.ConHandle = uint(uintptr(unsafe.Pointer(client)))
@@ -97,38 +98,41 @@ func (client *DxTcpClient)GetCoder() IConCoder {
 }
 
 func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool{
-	coder := client.encoder
 	sendok := false
 	var haswrite int = 0
-	if coder!=nil{
+	if client.encoder!=nil{
 		var retbytes []byte
 		if client.sendBuffer == nil{
-			client.sendBuffer = make([]byte,coder.MaxBufferLen())
+			client.sendBuffer = make([]byte,client.encoder.MaxBufferLen())
 		}
-		headLen := coder.HeadBufferLen()
+		headLen := client.encoder.HeadBufferLen()
 		if headLen > 2{
 			headLen = 4
+		}else{
+			headLen = 2
 		}
 		retbytes = client.sendBuffer[0:headLen]
-		buf := bytes.NewBuffer(retbytes[:headLen])
-		if err := coder.Encode(DataObj,buf);err==nil{
-			retbytes = buf.Bytes()
+		lenb := int(headLen)
+		buf := bytes.NewBuffer(client.sendBuffer[headLen:headLen])
+		if err := client.encoder.Encode(DataObj,buf);err==nil{
 			if headLen <= 2{
-				objbuflen := uint16(buf.Len()) - headLen
-				if coder.UseLitterEndian(){
-					binary.LittleEndian.PutUint16(retbytes[0:headLen],objbuflen)
+				objbuflen := uint16(buf.Len())
+				lenb += int(objbuflen) //实际要发送的数据内容长度
+				if client.encoder.UseLitterEndian(){
+					binary.LittleEndian.PutUint16(retbytes,objbuflen)
 				}else{
-					binary.BigEndian.PutUint16(retbytes[0:headLen],objbuflen)
+					binary.BigEndian.PutUint16(retbytes,objbuflen)
 				}
 			}else{
-				objbuflen := uint32(buf.Len()) - uint32(headLen)
-				if coder.UseLitterEndian(){
-					binary.LittleEndian.PutUint32(retbytes[0:headLen],objbuflen)
+				objbuflen := uint32(buf.Len())
+				lenb += int(objbuflen) //实际要发送的数据内容长度
+				if client.encoder.UseLitterEndian(){
+					binary.LittleEndian.PutUint32(retbytes,objbuflen)
 				}else{
-					binary.BigEndian.PutUint32(retbytes[0:headLen],objbuflen)
+					binary.BigEndian.PutUint32(retbytes,objbuflen)
 				}
 			}
-			lenb := len(retbytes)
+			retbytes = client.sendBuffer[0:lenb]//实际要发送的数据内容
 			buf = nil
 			for {
 				con.LastValidTime = time.Now()
