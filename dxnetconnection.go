@@ -100,6 +100,11 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 		default:
 			select {
+			case data,ok := <-con.recvDataQueue:
+				if !ok || data.PkgObject == nil{
+					break checkfor
+				}
+				con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 			case <-con.conDisconnect:
 				break checkfor
 			case <-After(time.Second):
