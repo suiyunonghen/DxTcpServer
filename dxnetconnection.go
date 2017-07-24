@@ -105,16 +105,12 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 							return
 						}
 					}
-					con.conHost.SendHeart(con)
+					if con.IsClientcon{
+						con.conHost.SendHeart(con)
+					}
 				}
 			}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
-				if con.conDisconnect != nil{
-					select {
-					case <-con.conDisconnect:
-						return
-					}
-				}
 				con.Close()
 				return
 			}
