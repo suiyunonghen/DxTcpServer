@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"bytes"
 	"time"
-	//"fmt"
 )
 
 type GOnRecvDataEvent func(con *DxNetConnection,recvData interface{})
@@ -85,28 +84,27 @@ func (con *DxNetConnection)connectionRun()  {
 
 func (con *DxNetConnection)checkHeartorSendData()  {
 	heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
-	checkfor:
 	for{
 		select {
 		case data, ok := <-con.sendDataQueue:
 			if !ok || data.PkgObject == nil{
-				break checkfor
+				return
 			}
 			con.conHost.SendData(con,data.PkgObject)
 		case data,ok := <-con.recvDataQueue:
 			if !ok || data.PkgObject == nil{
-				break checkfor
+				return
 			}
 			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 		default:
 			select {
 			case data,ok := <-con.recvDataQueue:
 				if !ok || data.PkgObject == nil{
-					break checkfor
+					return
 				}
 				con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
 			case <-con.conDisconnect:
-				break checkfor
+				return
 			case <-After(time.Second):
 				if con.IsClientcon{ //客户端连接
 					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
@@ -208,7 +206,7 @@ func (con *DxNetConnection)conRead()  {
 				if timeout != 0{
 					con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 				}
-				if rln,err = con.con.Read(readbuf[lastread:pkglen]);err !=nil {
+				if rln,err = con.con.Read(readbuf[lastread:pkglen]);err !=nil || rln ==0 {
 					con.Close()
 					return
 				}
@@ -217,17 +215,11 @@ func (con *DxNetConnection)conRead()  {
 					break
 				}
 			}
-			/*fmt.Println("接收到数据")
-			fmt.Println(readbuf[:pkglen])*/
 			//读取成功，解码数据
 			if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
 				pkg := new(DataPackage)
 				pkg.PkgObject = obj
 				pkg.pkglen = pkglen
-				/*fmt.Println("接收到数据包并解码成功")
-				fmt.Println(obj)
-				fmt.Println(len(con.recvDataQueue))*/
-
 				con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
 			}else{
 				con.Close()//无效的数据包
