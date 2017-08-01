@@ -228,6 +228,9 @@ func (srv *DxTcpServer)ReciveBuffer(buf []byte)bool  {
 }
 
 func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
+	if con.unActive{
+		return false
+	}
 	coder := srv.encoder
 	sendok := false
 	var haswrite int = 0

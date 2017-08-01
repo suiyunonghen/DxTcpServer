@@ -74,7 +74,7 @@ func (client *DxTcpClient)EnableHeartCheck()bool  {
 }
 
 func (client *DxTcpClient)SendHeart(con *DxNetConnection)  {
-	if client.OnSendHeart !=nil{
+	if client.Active && client.OnSendHeart !=nil{
 		client.OnSendHeart(con)
 	}
 }
@@ -98,6 +98,9 @@ func (client *DxTcpClient)GetCoder() IConCoder {
 }
 
 func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool{
+	if !client.Active || con.unActive{
+		return false
+	}
 	sendok := false
 	var haswrite int = 0
 	if client.encoder!=nil{
