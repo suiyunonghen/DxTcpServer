@@ -3,8 +3,10 @@ package DxTcpServer
 import (
 	"net"
 	"encoding/binary"
-	"bytes"
 	"time"
+	"fmt"
+	"io"
+	"github.com/landjur/golibrary/log"
 )
 
 type GOnRecvDataEvent func(con *DxNetConnection,recvData interface{})
@@ -19,11 +21,12 @@ type IConHost interface {
 	EnableHeartCheck() bool //是否启用心跳检查
 	SendHeart(con *DxNetConnection) //发送心跳
 	SendData(con *DxNetConnection,DataObj interface{})bool
+	Logger()*log.Logger
 }
 
 //编码器
 type IConCoder interface {
-	Encode(obj interface{},buf *bytes.Buffer) error //编码对象
+	Encode(obj interface{},w io.Writer) error //编码对象
 	Decode(bytes []byte)(result interface{},ok bool) //解码数据到对应的对象
 	HeadBufferLen()uint16  //编码器的包头大小
 	MaxBufferLen()uint16 //允许的最大缓存
@@ -35,6 +38,7 @@ type DataPackage struct {
 	PkgObject interface{}
 	pkglen	uint32
 }
+
 
 type DxNetConnection struct {
 	con net.Conn
@@ -107,6 +111,11 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 				}
 			}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
 				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
+				loger := con.conHost.Logger()
+				if loger != nil{
+					loger.SetPrefix("[Debug]")
+					loger.Debugln(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开",con.RemoteAddr()))
+				}
 				con.Close()
 				return
 			}
@@ -158,6 +167,15 @@ func (con *DxNetConnection)conRead()  {
 			con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 		}
 		if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
+			loger := con.conHost.Logger()
+			if loger != nil{
+				loger.SetPrefix("[Error]")
+				if con.IsClientcon{
+					loger.Debugln("读取失败，程序准备断开：",err.Error())
+				}else{
+					loger.Debugln(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+				}
+			}
 			con.Close()
 			return
 		}
@@ -191,6 +209,15 @@ func (con *DxNetConnection)conRead()  {
 					con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 				}
 				if rln,err = con.con.Read(readbuf[lastread:pkglen]);err !=nil || rln ==0 {
+					loger := con.conHost.Logger()
+					if loger != nil{
+						loger.SetPrefix("[Error]")
+						if con.IsClientcon{
+							loger.Debugln("读取失败，程序准备断开：",err.Error())
+						}else{
+							loger.Debugln(fmt.Sprintf("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+						}
+					}
 					con.Close()
 					return
 				}
@@ -206,6 +233,15 @@ func (con *DxNetConnection)conRead()  {
 				pkg.pkglen = pkglen
 				con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
 			}else{
+				loger := con.conHost.Logger()
+				if loger != nil{
+					loger.SetPrefix("[Error]")
+					if con.IsClientcon{
+						loger.Debugln("无效的数据包，异常，程序准备断开：")
+					}else{
+						loger.Debugln(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr()))
+					}
+				}
 				con.Close()//无效的数据包
 				return
 			}

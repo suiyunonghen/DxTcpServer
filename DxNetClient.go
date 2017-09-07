@@ -6,6 +6,8 @@ import (
 	"unsafe"
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"github.com/landjur/golibrary/log"
 )
 
 type DxTcpClient struct {
@@ -18,7 +20,8 @@ type DxTcpClient struct {
 	OnSendData	GOnSendDataEvent
 	Active		bool
 	TimeOutSeconds	int32
-	sendBuffer	[]byte
+	ClientLogger *log.Logger
+	sendBuffer	*bytes.Buffer
 }
 
 func (client *DxTcpClient)Connect(addr string)error {
@@ -43,6 +46,10 @@ func (client *DxTcpClient)Connect(addr string)error {
 	}else {
 		return err
 	}
+}
+
+func (client *DxTcpClient)Logger()*log.Logger  {
+	return client.ClientLogger
 }
 
 func (client *DxTcpClient)HandleConnectEvent(con *DxNetConnection)  {
@@ -106,7 +113,7 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 	if client.encoder!=nil{
 		var retbytes []byte
 		if client.sendBuffer == nil{
-			client.sendBuffer = make([]byte,client.encoder.MaxBufferLen())
+			client.sendBuffer = bytes.NewBuffer(make([]byte,0,client.encoder.MaxBufferLen()))
 		}
 		headLen := client.encoder.HeadBufferLen()
 		if headLen > 2{
@@ -114,32 +121,37 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 		}else{
 			headLen = 2
 		}
-		retbytes = client.sendBuffer[0:headLen]
-		lenb := int(headLen)
-		buf := bytes.NewBuffer(client.sendBuffer[headLen:headLen])
-		if err := client.encoder.Encode(DataObj,buf);err==nil{
+		//先写入数据内容长度进去
+		if headLen <= 2{
+			binary.Write(client.sendBuffer,binary.LittleEndian,uint16(1))
+		}else{
+			binary.Write(client.sendBuffer,binary.LittleEndian,uint32(1))
+		}
+		if err := client.encoder.Encode(DataObj,client.sendBuffer);err==nil{
+			retbytes = client.sendBuffer.Bytes()
+			lenb := len(retbytes)
+			objbuflen := lenb-int(headLen)
+			//然后写入实际长度
 			if headLen <= 2{
-				objbuflen := uint16(buf.Len())
-				lenb += int(objbuflen) //实际要发送的数据内容长度
 				if client.encoder.UseLitterEndian(){
-					binary.LittleEndian.PutUint16(retbytes,objbuflen)
+					binary.LittleEndian.PutUint16(retbytes[0:headLen],uint16(objbuflen))
 				}else{
-					binary.BigEndian.PutUint16(retbytes,objbuflen)
+					binary.BigEndian.PutUint16(retbytes[0:headLen],uint16(objbuflen))
 				}
 			}else{
-				objbuflen := uint32(buf.Len())
-				lenb += int(objbuflen) //实际要发送的数据内容长度
 				if client.encoder.UseLitterEndian(){
-					binary.LittleEndian.PutUint32(retbytes,objbuflen)
+					binary.LittleEndian.PutUint32(retbytes[0:headLen],uint32(objbuflen))
 				}else{
-					binary.BigEndian.PutUint32(retbytes,objbuflen)
+					binary.BigEndian.PutUint32(retbytes[0:headLen],uint32(objbuflen))
 				}
 			}
-			retbytes = client.sendBuffer[0:lenb]//实际要发送的数据内容
-			buf = nil
 			for {
 				con.LastValidTime = time.Now()
 				if wln,err := con.con.Write(retbytes[haswrite:lenb]);err != nil{
+					if client.ClientLogger != nil{
+						client.ClientLogger.SetPrefix("[Error]")
+						client.ClientLogger.Debugln(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+					}
 					con.Close()
 					break
 				}else{
@@ -154,6 +166,7 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 			con.LastValidTime = time.Now()
 			con.SendDataLen.AddByteSize(uint32(lenb))
 		}
+		client.sendBuffer.Reset()
 	}
 	if client.OnSendData != nil{
 		client.OnSendData(con,DataObj,haswrite,sendok)

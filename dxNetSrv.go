@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"sync"
 	"fmt"
+	"github.com/landjur/golibrary/log"
 )
 
 
@@ -119,7 +120,9 @@ type DxTcpServer struct {
 	SendDataSize	 DxDiskSize
 	RecvDataSize	DxDiskSize
 	MaxDataBufCount	uint16		//最大缓存数量
-	dataBuffer	chan[]byte   //缓存列表
+	dataBuffer	chan *bytes.Buffer   //缓存列表
+	SrvLogger		*log.Logger
+	bufferPool		sync.Pool
 	sync.RWMutex
 }
 type GIterateClientFunc func(con *DxNetConnection)
@@ -152,6 +155,10 @@ func (srv *DxTcpServer)Close()  {
 		c.Close()
 		delete(srv.clients, k)
 	}
+}
+
+func (srv *DxTcpServer)Logger()*log.Logger  {
+	return srv.SrvLogger
 }
 
 
@@ -194,37 +201,41 @@ func (srv *DxTcpServer)SendHeart(con *DxNetConnection)  {
 
 }
 
-func (srv *DxTcpServer)GetBuffer()(retbuf []byte)  {
+func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
 	var ok bool
 	if srv.dataBuffer != nil{
 		select{
 		case retbuf,ok = <-srv.dataBuffer:
 			if !ok{
-				retbuf = make([]byte,srv.encoder.MaxBufferLen())
+				retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
 			}
 		default:
-			retbuf = make([]byte,srv.encoder.MaxBufferLen())
+			retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
 		}
 	}else if srv.dataBuffer == nil && srv.MaxDataBufCount != 0{
-		srv.dataBuffer = make(chan []byte,srv.MaxDataBufCount)
-		retbuf = make([]byte,srv.encoder.MaxBufferLen())
+		srv.dataBuffer = make(chan *bytes.Buffer,srv.MaxDataBufCount)
+		retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
 	}else{
-		retbuf = make([]byte,srv.encoder.MaxBufferLen())
+		//从pool中获取
+		if retbuf,ok = srv.bufferPool.Get().(*bytes.Buffer);!ok{
+			retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
+		}
 	}
 	return
 }
 
-func (srv *DxTcpServer)ReciveBuffer(buf []byte)bool  {
+func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
+	buf.Reset()
 	if srv.dataBuffer != nil{
 		select{
 		case srv.dataBuffer <- buf:
 			return true
-		case <-After(time.Second * 5):
-			//回收失败
-			return false
+		default:
+			//什么都不做
 		}
 	}
-	return false
+	srv.bufferPool.Put(buf)
+	return true
 }
 
 func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
@@ -243,36 +254,40 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		}else{
 			headLen = 2
 		}
-		retbytes = sendBuffer[0:headLen]
-		buf := bytes.NewBuffer(sendBuffer[headLen:headLen])
-		if err := coder.Encode(DataObj,buf);err==nil{
-			lenb := int(headLen)
+		//先写入数据内容长度进去
+		if headLen <= 2{
+			binary.Write(sendBuffer,binary.LittleEndian,uint16(1))
+		}else{
+			binary.Write(sendBuffer,binary.LittleEndian,uint32(1))
+		}
+		if err := coder.Encode(DataObj,sendBuffer);err==nil{
+			retbytes = sendBuffer.Bytes()
+			lenb := len(retbytes)
+			objbuflen := lenb-int(headLen)
+			//然后写入实际长度
 			if headLen <= 2{
-				objbuflen := uint16(buf.Len())
-				lenb += int(objbuflen)//实际的对象长度
 				if coder.UseLitterEndian(){
-					binary.LittleEndian.PutUint16(retbytes,objbuflen)
+					binary.LittleEndian.PutUint16(retbytes[0:headLen],uint16(objbuflen))
 				}else{
-					binary.BigEndian.PutUint16(retbytes,objbuflen)
+					binary.BigEndian.PutUint16(retbytes[0:headLen],uint16(objbuflen))
 				}
 			}else{
-				objbuflen := uint32(buf.Len())
-				lenb += int(objbuflen)
 				if coder.UseLitterEndian(){
-					binary.LittleEndian.PutUint32(retbytes,objbuflen)
+					binary.LittleEndian.PutUint32(retbytes[0:headLen],uint32(objbuflen))
 				}else{
-					binary.BigEndian.PutUint32(retbytes,objbuflen)
+					binary.BigEndian.PutUint32(retbytes[0:headLen],uint32(objbuflen))
 				}
 			}
-			retbytes = sendBuffer[0:lenb]//实际要发送的数据内容
-			//fmt.Println(retbytes)
-			buf = nil
 			for {
-				con.LastValidTime = time.Now()
 				if wln,err := con.con.Write(retbytes[haswrite:lenb]);err != nil{
+					if srv.SrvLogger != nil{
+						srv.SrvLogger.SetPrefix("[Error]")
+						srv.SrvLogger.Debugln(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+					}
 					con.Close()
 					break
 				}else{
+					con.LastValidTime = time.Now()
 					haswrite+=wln
 					if haswrite == lenb{
 						sendok =true
@@ -281,14 +296,11 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 				}
 			}
 			//写入发送了多少数据
-			con.LastValidTime = time.Now()
 			srv.Lock()
 			srv.SendDataSize.AddByteSize(uint32(lenb))
 			srv.Unlock()
-			//fmt.Println("发送成功！")
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
-		sendBuffer = nil
 	}
 	if srv.OnSendData != nil{
 		srv.OnSendData(con,DataObj,haswrite,sendok)
