@@ -167,6 +167,9 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 			con.SendDataLen.AddByteSize(uint32(lenb))
 		}
 		client.sendBuffer.Reset()
+		if client.sendBuffer.Cap() > int(client.encoder.MaxBufferLen()){
+			client.sendBuffer = nil //超过最大数据长度，就清理掉本次的
+		}
 	}
 	if client.OnSendData != nil{
 		client.OnSendData(con,DataObj,haswrite,sendok)

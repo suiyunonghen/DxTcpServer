@@ -226,6 +226,10 @@ func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
 
 func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
 	buf.Reset()
+	if buf.Cap() > int(srv.encoder.MaxBufferLen()){
+		//超过最大容量的不回收，等待系统回收处理
+		return false
+	}
 	if srv.dataBuffer != nil{
 		select{
 		case srv.dataBuffer <- buf:
