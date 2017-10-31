@@ -207,16 +207,18 @@ func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
 		select{
 		case retbuf,ok = <-srv.dataBuffer:
 			if !ok{
-				retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
+				retbuf = nil
 			}
 		default:
-			retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
+			retbuf = nil
 		}
 	}else if srv.dataBuffer == nil && srv.MaxDataBufCount != 0{
 		srv.dataBuffer = make(chan *bytes.Buffer,srv.MaxDataBufCount)
 		retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
 	}else{
-		//从pool中获取
+		retbuf = nil
+	}
+	if retbuf == nil{
 		if retbuf,ok = srv.bufferPool.Get().(*bytes.Buffer);!ok{
 			retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
 		}
@@ -227,8 +229,8 @@ func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
 func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
 	buf.Reset()
 	if buf.Cap() > int(srv.encoder.MaxBufferLen()){
-		//超过最大容量的不回收，等待系统回收处理
-		return false
+		srv.bufferPool.Put(buf)
+		return true
 	}
 	if srv.dataBuffer != nil{
 		select{
