@@ -120,6 +120,7 @@ type DxTcpServer struct {
 	SendDataSize	 DxDiskSize
 	RecvDataSize	DxDiskSize
 	MaxDataBufCount	uint16		//最大缓存数量
+	SyncSendData	bool
 	dataBuffer	chan *bytes.Buffer   //缓存列表
 	SrvLogger		*log.Logger
 	bufferPool		sync.Pool

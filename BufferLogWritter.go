@@ -10,6 +10,7 @@ import(
 	"io/ioutil"
 	"io"
 	"path/filepath"
+	"github.com/suiyunonghen/DxCommonLib"
 )
 
 type(
@@ -74,7 +75,7 @@ func (loggerWriter *BufferLoggerWriter)reciveBuffer(buf []byte)bool  {
 		select{
 		case loggerWriter.bufferchan <- buf:
 			return true
-		case <-After(time.Second * 5):
+		case <-DxCommonLib.After(time.Second * 5):
 			//回收失败
 			return false
 		}

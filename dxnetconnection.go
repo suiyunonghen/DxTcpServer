@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"github.com/landjur/golibrary/log"
+	"github.com/suiyunonghen/DxCommonLib"
 )
 
 type GOnRecvDataEvent func(con *DxNetConnection,recvData interface{})
@@ -88,7 +89,7 @@ func (con *DxNetConnection)connectionRun()  {
 
 func (con *DxNetConnection)checkHeartorSendData()  {
 	heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
-	timeoutChan := After(time.Second*2)
+	timeoutChan := DxCommonLib.After(time.Second*2)
 	for{
 		select {
 		case data, ok := <-con.sendDataQueue:
@@ -119,7 +120,7 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 				con.Close()
 				return
 			}
-			timeoutChan = After(time.Second*2) //继续下一次的判定
+			timeoutChan = DxCommonLib.After(time.Second*2) //继续下一次的判定
 		}
 	}
 }
@@ -261,6 +262,14 @@ func (con *DxNetConnection)RemoteAddr()string  {
 	return con.remoteAddr
 }
 
+func (con *DxNetConnection)synSendData(data ...interface{})  {
+	con.conHost.SendData(con,data[1])
+}
+
+func (con *DxNetConnection)WriteObjectSync(obj interface{})  {
+	DxCommonLib.PostFunc(con.synSendData,obj)
+}
+
 func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 	if con.LimitSendPkgCout == 0{
 		return con.conHost.SendData(con,obj)
@@ -269,14 +278,10 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 		pkg.PkgObject = obj
 		select {
 		case con.sendDataQueue <- pkg:
-			{
 				return true
-			}
-		case <-After(time.Millisecond*500):
-			{
+		case <-DxCommonLib.After(time.Millisecond*500):
 				con.Close()
 				return false
-			}
 		}
 	}
 }
