@@ -111,6 +111,7 @@ type DxTcpServer struct {
 	OnClientConnect	GConnectEvent
 	OnClientDisConnected	GConnectEvent
 	OnSendData	GOnSendDataEvent
+	AfterEncodeData	GOnSendDataEvent
 	TimeOutSeconds	int32
 	curidx		uint
 	clients 	map[uint]*DxNetConnection
@@ -236,6 +237,7 @@ func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
 	if srv.dataBuffer != nil{
 		select{
 		case srv.dataBuffer <- buf:
+			//fmt.Println("srv.dataBuffer.len=",len(srv.dataBuffer))
 			return true
 		default:
 			//什么都不做
@@ -268,6 +270,9 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			binary.Write(sendBuffer,binary.LittleEndian,uint32(1))
 		}
 		if err := coder.Encode(DataObj,sendBuffer);err==nil{
+			if srv.OnSendData == nil && srv.AfterEncodeData != nil{
+				srv.AfterEncodeData(con,DataObj,0,false)
+			}
 			retbytes = sendBuffer.Bytes()
 			lenb := len(retbytes)
 			objbuflen := lenb-int(headLen)
@@ -306,6 +311,8 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			srv.Lock()
 			srv.SendDataSize.AddByteSize(uint32(lenb))
 			srv.Unlock()
+		}else if srv.OnSendData == nil && srv.AfterEncodeData != nil{
+			srv.AfterEncodeData(con,DataObj,0,false)
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
 	}

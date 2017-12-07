@@ -6,6 +6,7 @@ import (
 	"time"
 	"fmt"
 	"io"
+	"sync"
 	"github.com/landjur/golibrary/log"
 	"github.com/suiyunonghen/DxCommonLib"
 )
@@ -60,6 +61,24 @@ type DxNetConnection struct {
 	useData			    interface{} //用户数据
 }
 
+var(
+	pkgpool sync.Pool
+)
+
+func getpkg()*DataPackage  {
+	r := pkgpool.Get()
+	if r != nil{
+		return r.(*DataPackage)
+	}
+	return new(DataPackage)
+}
+
+func freepkg(pkg *DataPackage)  {
+	pkg.pkglen = 0
+	pkg.PkgObject = nil
+	pkgpool.Put(pkg)
+}
+
 func (con *DxNetConnection)SetUseData(v interface{})  {
 	con.useData = v
 }
@@ -97,11 +116,13 @@ func (con *DxNetConnection)checkHeartorSendData()  {
 				return
 			}
 			con.conHost.SendData(con,data.PkgObject)
+			freepkg(data)
 		case data,ok := <-con.recvDataQueue:
 			if !ok || data.PkgObject == nil{
 				return
 			}
 			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
+			freepkg(data)
 		case <-con.conDisconnect:
 			return
 		case <-timeoutChan:
@@ -229,7 +250,7 @@ func (con *DxNetConnection)conRead()  {
 			}
 			//读取成功，解码数据
 			if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
-				pkg := new(DataPackage)
+				pkg := getpkg()
 				pkg.PkgObject = obj
 				pkg.pkglen = pkglen
 				con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
@@ -270,11 +291,15 @@ func (con *DxNetConnection)WriteObjectSync(obj interface{})  {
 	DxCommonLib.PostFunc(con.synSendData,obj)
 }
 
+func (con *DxNetConnection)WriteObjectDirect(obj interface{})bool  {
+	return con.conHost.SendData(con,obj)
+}
+
 func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 	if con.LimitSendPkgCout == 0{
 		return con.conHost.SendData(con,obj)
 	}else{ //放到Chan列表中去发送
-		pkg := new(DataPackage)
+		pkg := getpkg()
 		pkg.PkgObject = obj
 		select {
 		case con.sendDataQueue <- pkg:
