@@ -89,11 +89,25 @@ func (con *DxNetConnection)GetUseData()interface{}  {
 
 //连接运行
 func (con *DxNetConnection)run()  {
-	go con.connectionRun()
+	DxCommonLib.Post(con)
+	//go con.connectionRun()
 }
 
+func (con *DxNetConnection)Run()  {
+	con.recvDataQueue = make(chan *DataPackage,5)
+	//心跳或发送数据
+	con.conDisconnect = make(chan struct{})
+	DxCommonLib.PostFunc(con.checkHeartorSendData,true) //接收
+	if con.LimitSendPkgCout != 0{
+		con.sendDataQueue = make(chan *DataPackage, con.LimitSendPkgCout)
+		DxCommonLib.PostFunc(con.checkHeartorSendData,false)  //发送
+	}
+	//开始进入获取数据信息
+	con.LastValidTime = time.Now()
+	con.conRead()
+}
 
-func (con *DxNetConnection)connectionRun()  {
+/*func (con *DxNetConnection)connectionRun()  {
 	if con.LimitSendPkgCout != 0{
 		con.sendDataQueue = make(chan *DataPackage, con.LimitSendPkgCout)
 	}
@@ -104,44 +118,54 @@ func (con *DxNetConnection)connectionRun()  {
 	//开始进入获取数据信息
 	con.LastValidTime = time.Now()
 	con.conRead()
-}
+}*/
 
-func (con *DxNetConnection)checkHeartorSendData()  {
-	heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
-	timeoutChan := DxCommonLib.After(time.Second*2)
-	for{
-		select {
-		case data, ok := <-con.sendDataQueue:
-			if !ok || data.PkgObject == nil{
-				return
-			}
-			con.conHost.SendData(con,data.PkgObject)
-			freepkg(data)
-		case data,ok := <-con.recvDataQueue:
-			if !ok || data.PkgObject == nil{
-				return
-			}
-			con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
-			freepkg(data)
-		case <-con.conDisconnect:
-			return
-		case <-timeoutChan:
-			if con.IsClientcon{ //客户端连接
-				if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
-					time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
-					con.conHost.SendHeart(con)
+func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
+	IsRecvFunc := data[0].(bool)
+	if IsRecvFunc{ //接收函数
+		heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
+		timeoutChan := DxCommonLib.After(time.Second*2)
+		for{
+			select {
+			case data,ok := <-con.recvDataQueue:
+				if !ok || data.PkgObject == nil{
+					return
 				}
-			}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
-				time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
-				loger := con.conHost.Logger()
-				if loger != nil{
-					loger.SetPrefix("[Debug]")
-					loger.Debugln(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开",con.RemoteAddr()))
+				con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
+				freepkg(data)
+			case <-con.conDisconnect:
+				return
+			case <-timeoutChan:
+				if con.IsClientcon{ //客户端连接
+					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
+						time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
+						con.conHost.SendHeart(con)
+					}
+				}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
+					time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
+					loger := con.conHost.Logger()
+					if loger != nil{
+						loger.SetPrefix("[Debug]")
+						loger.Debugln(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开",con.RemoteAddr()))
+					}
+					con.Close()
+					return
 				}
-				con.Close()
+				timeoutChan = DxCommonLib.After(time.Second*2) //继续下一次的判定
+			}
+		}
+	}else{
+		for{
+			select{
+			case data, ok := <-con.sendDataQueue:
+				if !ok || data.PkgObject == nil{
+					return
+				}
+				con.conHost.SendData(con,data.PkgObject)
+				freepkg(data)
+			case <-con.conDisconnect:
 				return
 			}
-			timeoutChan = DxCommonLib.After(time.Second*2) //继续下一次的判定
 		}
 	}
 }
@@ -158,6 +182,12 @@ func (con *DxNetConnection)Close()  {
 	con.con.Close()
 	con.conHost.HandleDisConnectEvent(con)
 	con.unActive = true
+	if con.recvDataQueue != nil{
+		close(con.recvDataQueue)
+	}
+	if con.sendDataQueue != nil{
+		close(con.sendDataQueue)
+	}
 }
 
 func (con *DxNetConnection)conRead()  {
