@@ -48,17 +48,17 @@ type DxNetConnection struct {
 	remoteAddr	            string
 	conHost		    	    IConHost  //连接宿主
 	LastValidTime		    time.Time //最后一次有效数据处理时间
-	LoginTime		    time.Time //登录时间
-	ConHandle		    uint
+	LoginTime		    	time.Time //登录时间
+	ConHandle		   		uint
 	conDisconnect		    chan struct{}
 	unActive				bool //已经关闭了
-	SendDataLen		    DxDiskSize
+	SendDataLen		    	DxDiskSize
 	ReciveDataLen		    DxDiskSize
-	sendDataQueue	      	    chan *DataPackage
+	sendDataQueue	      	chan *DataPackage
 	recvDataQueue		    chan *DataPackage
 	LimitSendPkgCout	    uint8
-	IsClientcon		    bool
-	useData			    interface{} //用户数据
+	IsClientcon		    	bool
+	useData			    	interface{} //用户数据
 }
 
 var(
