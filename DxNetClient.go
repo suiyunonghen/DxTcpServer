@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/landjur/golibrary/log"
+	"github.com/golang-plus/log"
 )
 
 type DxTcpClient struct {
@@ -37,7 +37,7 @@ func (client *DxTcpClient)Connect(addr string)error {
 			client.Clientcon.conHost = client
 			client.Clientcon.IsClientcon = true
 			client.HandleConnectEvent(&client.Clientcon)
-			client.Clientcon.run() //连接开始执行接收消息和发送消息的处理线程
+			client.Clientcon.Run() //连接开始执行接收消息和发送消息的处理线程
 			client.Active = true
 			return nil
 		}else{
@@ -46,6 +46,10 @@ func (client *DxTcpClient)Connect(addr string)error {
 	}else {
 		return err
 	}
+}
+
+func (client *DxTcpClient)AddRecvDataLen(datalen uint32){
+
 }
 
 func (client *DxTcpClient)Logger()*log.Logger  {
@@ -86,7 +90,7 @@ func (client *DxTcpClient)SendHeart(con *DxNetConnection)  {
 	}
 }
 
-func (client *DxTcpClient)HandleRecvEvent(con *DxNetConnection,recvData interface{},recvDataLen uint32)  {
+func (client *DxTcpClient)HandleRecvEvent(con *DxNetConnection,recvData interface{})  {
 	if client.OnRecvData!=nil{
 		client.OnRecvData(con,recvData)
 	}

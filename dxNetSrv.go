@@ -9,7 +9,8 @@ import (
 	"encoding/binary"
 	"sync"
 	"fmt"
-	"github.com/landjur/golibrary/log"
+	"github.com/golang-plus/log"
+	"github.com/suiyunonghen/DxCommonLib"
 )
 
 
@@ -164,6 +165,12 @@ func (srv *DxTcpServer)Logger()*log.Logger  {
 }
 
 
+func (srv *DxTcpServer)AddRecvDataLen(datalen uint32){
+	srv.Lock()
+	srv.RecvDataSize.AddByteSize(datalen)
+	srv.Unlock()
+}
+
 func (srv *DxTcpServer)acceptClients()  {
 	for{
 		conn, err := srv.listener.Accept()
@@ -185,7 +192,7 @@ func (srv *DxTcpServer)acceptClients()  {
 		srv.clients[dxcon.ConHandle] = dxcon
 		srv.Unlock()
 		srv.HandleConnectEvent(dxcon)
-		dxcon.run() //连接开始执行接收消息和发送消息的处理线程
+		DxCommonLib.Post(dxcon)//连接开始执行接收消息和发送消息的处理线程
 	}
 }
 
@@ -290,23 +297,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 					binary.BigEndian.PutUint32(retbytes[0:headLen],uint32(objbuflen))
 				}
 			}
-			for {
-				if wln,err := con.con.Write(retbytes[haswrite:lenb]);err != nil{
-					if srv.SrvLogger != nil{
-						srv.SrvLogger.SetPrefix("[Error]")
-						srv.SrvLogger.Debugln(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
-					}
-					con.Close()
-					break
-				}else{
-					con.LastValidTime = time.Now()
-					haswrite+=wln
-					if haswrite == lenb{
-						sendok =true
-						break
-					}
-				}
-			}
+			sendok = con.writeBytes(retbytes)
 			//写入发送了多少数据
 			srv.Lock()
 			srv.SendDataSize.AddByteSize(uint32(lenb))
@@ -315,6 +306,19 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			srv.AfterEncodeData(con,DataObj,0,false)
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
+	}else{
+		proto := con.protocol
+		if proto != nil{
+			if retbytes,err := proto.PacketObject(DataObj);err==nil{
+				sendok = con.writeBytes(retbytes)
+			}else{
+				sendok = false
+				if srv.SrvLogger != nil{
+					srv.SrvLogger.SetPrefix("[Error]")
+					srv.SrvLogger.Debugln(fmt.Sprintf("协议打包失败：%s",err.Error()))
+				}
+			}
+		}
 	}
 	if srv.OnSendData != nil{
 		srv.OnSendData(con,DataObj,haswrite,sendok)
@@ -357,13 +361,8 @@ func (srv *DxTcpServer)GetClients()map[uint]*DxNetConnection{
 }
 
 
-func (srv *DxTcpServer)HandleRecvEvent(con *DxNetConnection,recvData interface{},recvDataLen uint32)  {
+func (srv *DxTcpServer)HandleRecvEvent(con *DxNetConnection,recvData interface{})  {
 	atomic.AddUint64(&srv.RequestCount,1) //增加接收的请求数量
-	srv.Lock()
-	srv.RecvDataSize.AddByteSize(uint32(recvDataLen))
-	srv.Unlock()
-	//增加接收的数量信息
-	con.ReciveDataLen.AddByteSize(uint32(recvDataLen))
 	if srv.OnRecvData!=nil{
 		srv.OnRecvData(con,recvData)
 	}

@@ -6,8 +6,7 @@ import (
 	"time"
 	"fmt"
 	"io"
-	"sync"
-	"github.com/landjur/golibrary/log"
+	"github.com/golang-plus/log"
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
@@ -16,7 +15,7 @@ type GConnectEvent func(con *DxNetConnection)
 type GOnSendDataEvent func(con *DxNetConnection,Data interface{},sendlen int,sendok bool)
 type IConHost interface {
 	GetCoder()IConCoder //编码器
-	HandleRecvEvent(netcon *DxNetConnection,recvData interface{},recvDataLen uint32) //回收事件
+	HandleRecvEvent(netcon *DxNetConnection,recvData interface{}) //回收事件
 	HandleDisConnectEvent(con *DxNetConnection)
 	HandleConnectEvent(con *DxNetConnection)
 	HeartTimeOutSeconds() int32 //设定的心跳间隔超时响应时间
@@ -24,6 +23,7 @@ type IConHost interface {
 	SendHeart(con *DxNetConnection) //发送心跳
 	SendData(con *DxNetConnection,DataObj interface{})bool
 	Logger()*log.Logger
+	AddRecvDataLen(datalen uint32)
 }
 
 //编码器
@@ -33,6 +33,13 @@ type IConCoder interface {
 	HeadBufferLen()uint16  //编码器的包头大小
 	MaxBufferLen()uint16 //允许的最大缓存
 	UseLitterEndian()bool //是否采用小结尾端
+}
+
+//协议
+type IProtocol interface{
+	ProtoName()string
+	ParserProtocol(r io.Reader)(parserOk bool,datapkg interface{})		//解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
+	PacketObject(objpkg interface{})([]byte,error)  //将发送的内容打包
 }
 
 
@@ -47,6 +54,7 @@ type DxNetConnection struct {
 	localAddr	            string
 	remoteAddr	            string
 	conHost		    	    IConHost  //连接宿主
+	protocol				IProtocol
 	LastValidTime		    time.Time //最后一次有效数据处理时间
 	LoginTime		    	time.Time //登录时间
 	ConHandle		   		uint
@@ -54,29 +62,11 @@ type DxNetConnection struct {
 	unActive				bool //已经关闭了
 	SendDataLen		    	DxDiskSize
 	ReciveDataLen		    DxDiskSize
-	sendDataQueue	      	chan *DataPackage
-	recvDataQueue		    chan *DataPackage
+	sendDataQueue	      	chan interface{}
+	recvDataQueue		    chan interface{}
 	LimitSendPkgCout	    uint8
 	IsClientcon		    	bool
 	useData			    	interface{} //用户数据
-}
-
-var(
-	pkgpool sync.Pool
-)
-
-func getpkg()*DataPackage  {
-	r := pkgpool.Get()
-	if r != nil{
-		return r.(*DataPackage)
-	}
-	return new(DataPackage)
-}
-
-func freepkg(pkg *DataPackage)  {
-	pkg.pkglen = 0
-	pkg.PkgObject = nil
-	pkgpool.Put(pkg)
 }
 
 func (con *DxNetConnection)SetUseData(v interface{})  {
@@ -87,38 +77,82 @@ func (con *DxNetConnection)GetUseData()interface{}  {
 	return con.useData
 }
 
-//连接运行
-func (con *DxNetConnection)run()  {
-	DxCommonLib.Post(con)
-	//go con.connectionRun()
-}
-
 func (con *DxNetConnection)Run()  {
-	con.recvDataQueue = make(chan *DataPackage,5)
+	//开始进入获取数据信息
+	con.LastValidTime = time.Now()
+	con.recvDataQueue = make(chan interface{},5)
 	//心跳或发送数据
 	con.conDisconnect = make(chan struct{})
 	DxCommonLib.PostFunc(con.checkHeartorSendData,true) //接收
 	if con.LimitSendPkgCout != 0{
-		con.sendDataQueue = make(chan *DataPackage, con.LimitSendPkgCout)
+		con.sendDataQueue = make(chan interface{}, con.LimitSendPkgCout)
 		DxCommonLib.PostFunc(con.checkHeartorSendData,false)  //发送
 	}
-	//开始进入获取数据信息
-	con.LastValidTime = time.Now()
+	if con.conHost.GetCoder() == nil{
+		con.conCustomRead()
+		return
+	}
 	con.conRead()
 }
 
-/*func (con *DxNetConnection)connectionRun()  {
-	if con.LimitSendPkgCout != 0{
-		con.sendDataQueue = make(chan *DataPackage, con.LimitSendPkgCout)
+func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
+	haswrite := 0
+	loger := con.conHost.Logger()
+	lenb := len(wbytes)
+	for {
+		if wln,err := con.con.Write(wbytes[haswrite:lenb]);err != nil{
+			if loger != nil{
+				loger.SetPrefix("[Error]")
+				loger.Debugln(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+			}
+			con.Close()
+			return false
+		}else{
+			con.LastValidTime = time.Now()
+			haswrite+=wln
+			if haswrite == lenb{
+				return true
+			}
+		}
 	}
-	con.recvDataQueue = make(chan *DataPackage,5)
-	//心跳或发送数据
-	con.conDisconnect = make(chan struct{})
-	go con.checkHeartorSendData()
-	//开始进入获取数据信息
-	con.LastValidTime = time.Now()
-	con.conRead()
-}*/
+}
+
+//执行自定义数据包格式的处理规则
+func (con *DxNetConnection)conCustomRead()  {
+	reader := NewDxReader(con.con,4096)
+	for{
+		rlen,e,_ := reader.ReadAppend()
+		if e!=nil || rlen==0{
+			loger := con.conHost.Logger()
+			if loger != nil{
+				loger.SetPrefix("[Error]")
+				if con.IsClientcon{
+					loger.Debugln("读取失败，程序准备断开：",e.Error())
+				}else{
+					loger.Debugln(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error()))
+				}
+			}
+			con.Close()
+			return
+		}
+		con.ReciveDataLen.AddByteSize(uint32(rlen))
+		con.conHost.AddRecvDataLen(uint32(rlen))
+		for{
+			markidx,markOffset := reader.MarkIndex()
+			pok,pkg := con.protocol.ParserProtocol(reader)//解析出实际的协议宝
+			if !pok{
+				reader.RestoreMark(markidx,markOffset)
+				break
+			}else{
+				//如果协议包不为空，就发送出去，然后等待处理
+				con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
+				reader.ClearRead()
+			}
+		}
+
+	}
+}
+
 
 func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 	IsRecvFunc := data[0].(bool)
@@ -128,11 +162,10 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 		for{
 			select {
 			case data,ok := <-con.recvDataQueue:
-				if !ok || data.PkgObject == nil{
+				if !ok || data == nil{
 					return
 				}
-				con.conHost.HandleRecvEvent(con,data.PkgObject,data.pkglen)
-				freepkg(data)
+				con.conHost.HandleRecvEvent(con,data)
 			case <-con.conDisconnect:
 				return
 			case <-timeoutChan:
@@ -158,11 +191,10 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 		for{
 			select{
 			case data, ok := <-con.sendDataQueue:
-				if !ok || data.PkgObject == nil{
+				if !ok || data == nil{
 					return
 				}
-				con.conHost.SendData(con,data.PkgObject)
-				freepkg(data)
+				con.conHost.SendData(con,data)
 			case <-con.conDisconnect:
 				return
 			}
@@ -191,16 +223,12 @@ func (con *DxNetConnection)Close()  {
 }
 
 func (con *DxNetConnection)conRead()  {
+	encoder := con.conHost.GetCoder()
 	var timeout int32
 	if con.conHost.EnableHeartCheck(){
 		timeout = con.conHost.HeartTimeOutSeconds()
 	}else{
 		timeout = 0
-	}
-	encoder := con.conHost.GetCoder()
-	if encoder == nil{
-		con.Close()
-		return
 	}
 	pkgHeadLen := encoder.HeadBufferLen() //包头长度
 	if pkgHeadLen <= 2 {
@@ -280,10 +308,8 @@ func (con *DxNetConnection)conRead()  {
 			}
 			//读取成功，解码数据
 			if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
-				pkg := getpkg()
-				pkg.PkgObject = obj
-				pkg.pkglen = pkglen
-				con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
+				con.conHost.AddRecvDataLen(uint32(pkglen))
+				con.recvDataQueue <- obj //发送到执行回收事件的解析队列中去
 			}else{
 				loger := con.conHost.Logger()
 				if loger != nil{
@@ -329,10 +355,8 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 	if con.LimitSendPkgCout == 0{
 		return con.conHost.SendData(con,obj)
 	}else{ //放到Chan列表中去发送
-		pkg := getpkg()
-		pkg.PkgObject = obj
 		select {
-		case con.sendDataQueue <- pkg:
+		case con.sendDataQueue <- obj:
 				return true
 		case <-DxCommonLib.After(time.Millisecond*500):
 				con.Close()
