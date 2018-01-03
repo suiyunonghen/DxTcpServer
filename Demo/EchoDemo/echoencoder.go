@@ -2,7 +2,6 @@ package EchoDemo
 
 import (
 	"io"
-	//"encoding/binary"
 	"github.com/suiyunonghen/DxTcpServer/ServerBase"
 	"encoding/binary"
 	"bytes"
@@ -38,7 +37,7 @@ func (coder *EchoCoder)ProtoName()string  {
 	return "ECHO"
 }
 
-func (coder *EchoCoder)ParserProtocol(r *ServerBase.DxReader)(parserOk bool,datapkg interface{}) { //解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
+func (coder *EchoCoder)ParserProtocol(r *ServerBase.DxReader)(parserOk bool,datapkg interface{},e error) { //解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
 	count := r.Buffered()
 	if count > 0{
 		bt := make([]byte,count)
@@ -49,18 +48,17 @@ func (coder *EchoCoder)ParserProtocol(r *ServerBase.DxReader)(parserOk bool,data
 		datapkg = nil
 		parserOk = false
 	}
-	return parserOk,datapkg
+	return parserOk,datapkg,nil
 }
-func (coder *EchoCoder)PacketObject(objpkg interface{})([]byte,error) { //将发送的内容打包
+func (coder *EchoCoder)PacketObject(objpkg interface{},buffer *bytes.Buffer)([]byte,error) { //将发送的内容打包
 	switch v := objpkg.(type){
 	case string:
 		return ([]byte)(v),nil
 	case []byte:
 		return v,nil
 	default:
-		buf := new(bytes.Buffer)
-		binary.Write(buf,binary.BigEndian,objpkg)
-		return buf.Bytes(),nil
+		binary.Write(buffer,binary.BigEndian,objpkg)
+		return buffer.Bytes(),nil
 	}
 }
 

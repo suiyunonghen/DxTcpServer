@@ -37,6 +37,12 @@ func (client *DxTcpClient)Connect(addr string)error {
 			client.Clientcon.ConHandle = uint(uintptr(unsafe.Pointer(client)))
 			client.Clientcon.conHost = client
 			client.Clientcon.IsClientcon = true
+			client.Clientcon.protocol = nil
+			if client.encoder != nil{
+				if protocol,ok := client.encoder.(IProtocol);ok{
+					client.Clientcon.protocol = protocol
+				}
+			}
 			client.HandleConnectEvent(&client.Clientcon)
 			DxCommonLib.Post(&client.Clientcon)//连接开始执行接收消息和发送消息的处理线程
 			client.Active = true
@@ -179,7 +185,10 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 			client.sendBuffer = nil //超过最大数据长度，就清理掉本次的
 		}
 	}else if con.protocol != nil{
-		if retbytes,err := con.protocol.PacketObject(DataObj);err==nil{
+		if client.sendBuffer == nil{
+			client.sendBuffer = bytes.NewBuffer(make([]byte,0,client.encoder.MaxBufferLen()))
+		}
+		if retbytes,err := con.protocol.PacketObject(DataObj,client.sendBuffer);err==nil{
 			sendok = con.writeBytes(retbytes)
 		}else{
 			sendok = false

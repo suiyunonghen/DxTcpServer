@@ -2,6 +2,7 @@ package ServerBase
 import (
 	"io"
 	"sync"
+	"bytes"
 )
 
 type DxReader struct {
@@ -42,6 +43,14 @@ func (r *DxReader)ClearRead()  {
 			r.chainbuf = r.chainbuf[:r.widx]
 		}
 		r.ridx = 0
+	}
+	if r.IsEmpty(){
+		if len(r.chainbuf)==0{
+			r.w = -1
+		}else{
+			r.w = 0
+		}
+		r.r = 0
 	}
 }
 
@@ -99,8 +108,10 @@ func (reader *DxReader)Read(p []byte) (int, error)  {
 		reader.r+=wrlen
 		return wrlen,nil
 	}
-	copy(p,buf[reader.r:])
-	wrlen -= rlen
+	if rlen > 0{
+		copy(p,buf[reader.r:])
+		wrlen -= rlen
+	}
 	for i := reader.ridx + 1;i < reader.widx;i++{
 		reader.ridx += 1
 		reader.r = 0
@@ -122,6 +133,8 @@ func (reader *DxReader)Read(p []byte) (int, error)  {
 		}
 		copy(p[rlen:],buf[:reader.w])
 		rlen += reader.w
+		reader.r = reader.w
+		reader.ridx = reader.widx
 		wrlen -= reader.w
 	}
 	reader.ClearRead()
@@ -135,6 +148,62 @@ func (reader *DxReader)IsEmpty()bool  {
 
 func (reader *DxReader)TotalSize()int  {
 	return len(reader.chainbuf)*reader.bufsize
+}
+
+//读取切片，以delim切分
+func (b *DxReader) ReadBytes(delim byte) (line []byte, err error) {
+	//先查找是否又delim
+	if b.IsEmpty(){
+		return nil,nil
+	}
+	line = nil
+	for{
+		buf := b.chainbuf[b.ridx]
+		if i := bytes.IndexByte(buf[b.r:], delim); i >= 0 {
+			if line == nil{
+				line = buf[b.r : b.r+i+1]
+			}else{
+				line = append(line,buf[b.r : b.r+i+1]...)
+			}
+			b.r += i + 1
+			return
+		}
+		if line == nil{
+			line = make([]byte,b.bufsize-b.r)
+			copy(line,buf[b.r:])
+		}else{
+			line = append(line,buf[b.r:]...)
+		}
+		for ridx := b.ridx+1;ridx<b.widx;ridx++{
+			buf = b.chainbuf[ridx]
+			b.ridx = ridx
+			if i := bytes.IndexByte(buf, delim); i >= 0 {
+				//找到了，将前面的全部合并起来
+				line = append(line, buf[: b.r+i+1]...)
+				b.r += i + 1
+				return
+			}else{
+				line = append(line,buf...)
+			}
+		}
+		buf = b.chainbuf[b.widx]
+		if i := bytes.IndexByte(buf[:b.w], delim); i >= 0 {
+			//找到了，将前面的全部合并起来
+			line = append(line, buf[: b.r+i+1]...)
+			b.r += i + 1
+			b.ridx = b.widx
+			return
+		}else{
+			line = append(line,buf[:b.w]...)
+			b.r = b.w
+			b.ridx = b.widx
+		}
+		b.ClearRead()
+		if rlen,e,_ := b.ReadAppend(); e!=nil || rlen==0{
+			return nil,e
+		}
+	}
+	return
 }
 
 func NewDxReader(rd io.Reader, bufersize int)*DxReader  {

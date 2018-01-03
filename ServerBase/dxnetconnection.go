@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"bytes"
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
@@ -39,8 +40,8 @@ type IConCoder interface {
 //协议
 type IProtocol interface{
 	ProtoName()string
-	ParserProtocol(r *DxReader)(parserOk bool,datapkg interface{})		//解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
-	PacketObject(objpkg interface{})([]byte,error)  //将发送的内容打包
+	ParserProtocol(r *DxReader)(parserOk bool,datapkg interface{},e error)		//解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
+	PacketObject(objpkg interface{},buffer *bytes.Buffer)([]byte,error)  //将发送的内容打包到w中
 }
 
 
@@ -84,17 +85,10 @@ func (con *DxNetConnection)Run()  {
 	con.recvDataQueue = make(chan interface{},5)
 	//心跳或发送数据
 	con.conDisconnect = make(chan struct{})
-	con.protocol = nil
 	DxCommonLib.PostFunc(con.checkHeartorSendData,true) //接收
 	if con.LimitSendPkgCout != 0{
 		con.sendDataQueue = make(chan interface{}, con.LimitSendPkgCout)
 		DxCommonLib.PostFunc(con.checkHeartorSendData,false)  //发送
-	}
-	coder := con.conHost.GetCoder()
-	if coder != nil{
-		if protocol,ok := coder.(IProtocol);ok{
-			con.protocol = protocol
-		}
 	}
 	if con.protocol != nil{
 		con.conCustomRead()
@@ -149,7 +143,20 @@ func (con *DxNetConnection)conCustomRead()  {
 		con.conHost.AddRecvDataLen(uint32(rlen))
 		for{
 			markidx,markOffset := reader.MarkIndex()
-			pok,pkg := con.protocol.ParserProtocol(reader)//解析出实际的协议宝
+			pok,pkg,err := con.protocol.ParserProtocol(reader)//解析出实际的协议宝
+			if err != nil{
+				loger := con.conHost.Logger()
+				if loger != nil{
+					loger.SetPrefix("[Error]")
+					if con.IsClientcon{
+						loger.Println("读取失败，程序准备断开：",err.Error())
+					}else{
+						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+					}
+				}
+				con.Close()
+				return
+			}
 			if !pok{
 				reader.RestoreMark(markidx,markOffset)
 				break
@@ -226,6 +233,7 @@ func (con *DxNetConnection)Close()  {
 	con.con.Close()
 	con.conHost.HandleDisConnectEvent(con)
 	con.unActive = true
+	con.useData = nil
 	if con.recvDataQueue != nil{
 		close(con.recvDataQueue)
 	}

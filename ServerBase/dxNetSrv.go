@@ -197,6 +197,12 @@ func (srv *DxTcpServer)acceptClients()  {
 		srv.Lock()
 		srv.clients[dxcon.ConHandle] = dxcon
 		srv.Unlock()
+		dxcon.protocol = nil
+		if srv.encoder != nil{
+			if protocol,ok := srv.encoder.(IProtocol);ok{
+				dxcon.protocol = protocol
+			}
+		}
 		srv.HandleConnectEvent(dxcon)
 		DxCommonLib.Post(dxcon)//连接开始执行接收消息和发送消息的处理线程
 	}
@@ -309,7 +315,8 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
 	}else if con.protocol != nil{
-		if retbytes,err := con.protocol.PacketObject(DataObj);err==nil{
+		sendBuffer := srv.GetBuffer()
+		if retbytes,err := con.protocol.PacketObject(DataObj,sendBuffer);err==nil{
 			sendok = con.writeBytes(retbytes)
 		}else{
 			sendok = false
@@ -318,6 +325,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 				srv.SrvLogger.Println(fmt.Sprintf("协议打包失败：%s",err.Error()))
 			}
 		}
+		srv.ReciveBuffer(sendBuffer)//回收
 	}
 	if srv.OnSendData != nil{
 		srv.OnSendData(con,DataObj,haswrite,sendok)
