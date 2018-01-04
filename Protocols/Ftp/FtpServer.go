@@ -46,6 +46,8 @@ type(
 	ftpClientBinds		struct{
 		user			*ftpUser
 		isLogin			bool
+		curPath			string			//当前的路径位置
+		typeAnsi		bool			//ANSIMode
 	}
 
 	FTPServer struct{
@@ -55,8 +57,166 @@ type(
 		WelcomeMessage		string
 		anonymousUser		ftpUser
 	}
+
+	ftpcmd		interface{
+		Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)
+		IsFeatCmd()bool
+		MustLogin()bool
+	}
+
+	cmdBase		struct{}
+	cmdUser		struct{cmdBase}
+	cmdSYST		struct{cmdBase}
+	cmdPASS		struct{cmdBase}
+	cmdFEAT		struct{cmdBase}
+	cmdQUIT		struct{cmdBase}
+	cmdPWD		struct{cmdBase}
+	cmdTYPE		struct{cmdBase}
+	cmdPASV		struct{cmdBase}
 )
 
+var (
+	ftpCmds	= map[string]ftpcmd{
+		"USER":			cmdUser{},
+		"SYST":			cmdSYST{},
+		"PASS":			cmdPASS{},
+		"FEAT":			cmdFEAT{},
+		"QUIT":			cmdQUIT{},
+		"PWD":			cmdPWD{},
+		"TYPE":			cmdTYPE{},
+		"PASV":			cmdPASV{},
+		}
+	featCmds			string
+)
+
+func init() {
+	for k, v := range ftpCmds {
+		if v.IsFeatCmd() {
+			featCmds = featCmds + " " + k + "\n"
+		}
+	}
+}
+
+func (cmd cmdBase)IsFeatCmd() bool{
+	return false
+}
+
+func (cmd cmdBase)MustLogin() bool{
+	return true
+}
+
+func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//被动传输模式
+	con.WriteObject(&ftpResponsePkg{500,"Commands not supported temporarily",false})
+}
+
+
+func (cmd cmdTYPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//查看或者设置当前的传输方式
+	client := con.GetUseData().(*ftpClientBinds)
+	paramstr = strings.ToUpper(paramstr)
+	if paramstr == "A"{
+		client.typeAnsi = true
+		con.WriteObject(&ftpResponsePkg{200,"Type set to ASCII",false})
+	}else if paramstr == "I"{
+		client.typeAnsi = false
+		con.WriteObject(&ftpResponsePkg{200,"Type set to binary",false})
+	}else if paramstr == ""{
+		if client.typeAnsi{
+			con.WriteObject(&ftpResponsePkg{200,"Type is ASCII",false})
+		}else{
+			con.WriteObject(&ftpResponsePkg{200,"Type is binary",false})
+		}
+	}else{
+		con.WriteObject(&ftpResponsePkg{500,"Type Can Only A or I",false})
+	}
+}
+
+func (cmd cmdPWD)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	client := con.GetUseData().(*ftpClientBinds)
+	con.WriteObject(&ftpResponsePkg{257,"\""+client.curPath+"\" is the current directory",false})
+}
+
+func (cmd cmdQUIT)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdQUIT)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	con.WriteObject(&ftpResponsePkg{221,"Byebye",false})
+}
+
+func (cmd cmdFEAT)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdFEAT)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//获取系统支持的CMD扩展命令
+	con.WriteObject(&ftpResponsePkg{211,fmt.Sprintf("Extensions supported:\n%s", featCmds),true})
+}
+
+func (cmd cmdPASS)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdPASS)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//用户密码
+	client := con.GetUseData().(*ftpClientBinds)
+	client.isLogin = false
+	if client.user.PassWord == paramstr{
+		client.isLogin = true
+		client.curPath = "/"
+		con.WriteObject(&ftpResponsePkg{230,"user login success!",false})
+	}else{
+		if client.user.IsAnonymous && client.user.PassWord == ""{
+			client.isLogin = true
+			client.curPath = "/"
+			con.WriteObject(&ftpResponsePkg{230,"user login success!",false})
+		}else{
+			con.WriteObject(&ftpResponsePkg{530,"Password error, user logon failed",false})
+		}
+	}
+}
+
+func (cmd cmdSYST)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdSYST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//服务器远程系统的操作系统类型
+	if strings.Compare(runtime.GOOS,"windows") == 0{
+		con.WriteObject(&ftpResponsePkg{215,"Windows Type: L8",false})
+	}else{
+		con.WriteObject(&ftpResponsePkg{215,"UNIX Type: L8",false})
+	}
+}
+
+
+func (cmd cmdUser)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdUser)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//用户登录，将记录用户的信息,绑定到用户信息上
+	if strings.Compare(paramstr,srv.anonymousUser.UserID)==0{
+		ftpbinds := new(ftpClientBinds)
+		ftpbinds.isLogin = false
+		ftpbinds.typeAnsi = true
+		ftpbinds.user = &srv.anonymousUser
+		con.SetUseData(ftpbinds)
+		con.WriteObject(&ftpResponsePkg{331,"Please enter a password",false})
+		return
+	}
+	if v,ok := srv.users.Load(paramstr);ok{
+		ftpbinds := new(ftpClientBinds)
+		ftpbinds.typeAnsi = true
+		ftpbinds.isLogin = false
+		ftpbinds.user = v.(*ftpUser)
+		con.SetUseData(ftpbinds)
+		con.WriteObject(&ftpResponsePkg{331,"Please enter a password",false})
+		return
+	}
+	con.WriteObject(&ftpResponsePkg{530,"User does not exist and cannot log on",false})
+}
 
 func (coder *FtpProtocol)Encode(obj interface{},w io.Writer)error  {
 	return nil
@@ -126,9 +286,8 @@ func NewFtpServer()*FTPServer  {
 	result := new(FTPServer)
 	result.SetCoder(new(FtpProtocol))
 	result.anonymousUser.UserID = "anonymous"
-	result.anonymousUser.PassWord = "anonymous"//账户密码
 	result.anonymousUser.IsAnonymous = true
-	result.WelcomeMessage = "欢迎使用DxGoFTP"
+	result.WelcomeMessage = "Welcom to DxGoFTP"
 	result.OnClientConnect = func(con *ServerBase.DxNetConnection){
 		//客户链接，发送回消息
 		con.WriteObject(&ftpResponsePkg{220,result.WelcomeMessage,false})
@@ -139,89 +298,24 @@ func NewFtpServer()*FTPServer  {
 		paramstr := DxCommonLib.FastByte2String(cmdpkg.params)
 		fmt.Println(v)
 		fmt.Println(paramstr)
-		switch v {
-		case "ADAT":
-		case "ALLO":
-		case "APPE":
-		case "AUTH":
-		case "CDUP":
-		case "CWD":
-		case "CCC":
-		case "CONF":
-		case "DELE":
-		case "ENC":
-		case "EPRT":
-		case "EPSV":
-		case "FEAT":
-		case "LIST":
-		case "NLST":
-		case "MDTM":
-		case "MIC":
-		case "MKD":
-		case "MODE":
-		case "NOOP":
-		case "OPTS":
-		case "PASS":
-			//用户密码
-			//conn.writeMessage(331, "User name ok, password required")
-			client := con.GetUseData().(*ftpClientBinds)
-			if client.user.PassWord == paramstr{
-				client.isLogin = true
-				con.WriteObject(&ftpResponsePkg{230,"用户登录成功！",false})
-			}else{
-				if client.user.IsAnonymous && client.user.PassWord == ""{
-					con.WriteObject(&ftpResponsePkg{230,"用户登录成功！",false})
-				}else{
-					con.WriteObject(&ftpResponsePkg{530,"密码错误，用户登录失败",false})
+		if cmd,ok := ftpCmds[v];!ok{
+			con.WriteObject(&ftpResponsePkg{500,"Commands not supported temporarily",false})
+		}else {
+			if cmd.MustLogin(){
+				client := con.GetUseData().(*ftpClientBinds)
+				if !client.isLogin{
+					con.WriteObject(&ftpResponsePkg{530,"you must login first",false})
+					return
 				}
 			}
-		case "PASV":
-		case "PBSZ":
-		case "PORT":
-		case "PROT":
-		case "PWD":
-		case "QUIT":
-		case "RETR":
-		case "REST":
-		case "RNFR":
-		case "RNTO":
-		case "RMD":
-		case "SIZE":
-		case "STOR":
-		case "STRU":
-		case "SYST":
-			//服务器远程系统的操作系统类型
-			if strings.Compare(runtime.GOOS,"windows") == 0{
-				con.WriteObject(&ftpResponsePkg{215,"Windows Type: L8",false})
-			}else{
-				con.WriteObject(&ftpResponsePkg{215,"UNIX Type: L8",false})
+			cmd.Execute(result,con,paramstr)
+		}
+	}
+	result.OnSendData = func(con *ServerBase.DxNetConnection,Data interface{},sendlen int,sendok bool){
+		if respPkg,ok := Data.(*ftpResponsePkg);ok{
+			if respPkg.responseCode==221 && respPkg.responseMsg=="Byebye"{
+				con.Close()
 			}
-		case "TYPE":
-		case "USER":
-			//用户登录，将记录用户的信息,绑定到用户信息上
-			if strings.Compare(paramstr,result.anonymousUser.UserID)==0{
-				ftpbinds := new(ftpClientBinds)
-				ftpbinds.isLogin = false
-				ftpbinds.user = &result.anonymousUser
-				con.SetUseData(ftpbinds)
-				con.WriteObject(&ftpResponsePkg{331,"用户名确认，请输入用户密码",false})
-				return
-			}
-			if v,ok := result.users.Load(paramstr);ok{
-				ftpbinds := new(ftpClientBinds)
-				ftpbinds.isLogin = false
-				ftpbinds.user = v.(*ftpUser)
-				con.SetUseData(ftpbinds)
-				con.WriteObject(&ftpResponsePkg{331,"用户名确认，请输入用户密码",false})
-				return
-			}
-			con.WriteObject(&ftpResponsePkg{530,"用户不存在，无法登录",false})
-		case "XCUP":
-		case "XCWD":
-		case "XPWD":
-		case "XRMD":
-		default:
-			con.WriteObject(&ftpResponsePkg{500,"暂时不支持的命令",false})
 		}
 	}
 	return result
