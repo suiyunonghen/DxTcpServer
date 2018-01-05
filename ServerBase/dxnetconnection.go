@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"bytes"
+	"sync"
+	"sync/atomic"
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
@@ -60,19 +62,38 @@ type DxNetConnection struct {
 	LastValidTime		    time.Time //最后一次有效数据处理时间
 	LoginTime		    	time.Time //登录时间
 	ConHandle		   		uint
-	conDisconnect		    chan struct{}
-	unActive				bool //已经关闭了
+	unActive				atomic.Value //已经关闭了
 	SendDataLen		    	DxDiskSize
 	ReciveDataLen		    DxDiskSize
 	sendDataQueue	      	chan interface{}
 	recvDataQueue		    chan interface{}
 	LimitSendPkgCout	    uint8
+	srvcancelChan			<-chan struct{}
+	selfcancelchan			chan struct{}
 	IsClientcon		    	bool
+	waitg					sync.WaitGroup
 	useData			    	interface{} //用户数据
 }
 
 func (con *DxNetConnection)SetUseData(v interface{})  {
 	con.useData = v
+}
+
+func (con *DxNetConnection)UnActive()bool  {
+	v := con.unActive.Load()
+	if v != nil{
+		return v.(bool)
+	}
+	return true
+}
+
+func (con *DxNetConnection)UnActiveSet(value bool)bool  {
+	v := con.unActive.Load()
+	con.unActive.Store(value)
+	if v != nil{
+		return v.(bool)
+	}
+	return true
 }
 
 func (con *DxNetConnection)GetUseData()interface{}  {
@@ -84,7 +105,6 @@ func (con *DxNetConnection)Run()  {
 	con.LastValidTime = time.Now()
 	con.recvDataQueue = make(chan interface{},5)
 	//心跳或发送数据
-	con.conDisconnect = make(chan struct{})
 	DxCommonLib.PostFunc(con.checkHeartorSendData,true) //接收
 	if con.LimitSendPkgCout != 0{
 		con.sendDataQueue = make(chan interface{}, con.LimitSendPkgCout)
@@ -123,70 +143,91 @@ func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 
 //执行自定义数据包格式的处理规则
 func (con *DxNetConnection)conCustomRead()  {
-	reader := NewDxReader(con.con,4096)
-	for{
-		rlen,e,_ := reader.ReadAppend()
-		if e!=nil || rlen==0{
-			loger := con.conHost.Logger()
-			if loger != nil{
-				loger.SetPrefix("[Error]")
-				if con.IsClientcon{
-					loger.Println("读取失败，程序准备断开：",e.Error())
-				}else{
-					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error()))
-				}
-			}
-			con.Close()
-			return
+	coder := con.conHost.GetCoder()
+	var bufsize uint16
+	if coder != nil{
+		bufsize = coder.MaxBufferLen() / 4
+		if bufsize < 512{
+			bufsize = 512
 		}
-		con.ReciveDataLen.AddByteSize(uint32(rlen))
-		con.conHost.AddRecvDataLen(uint32(rlen))
-		for{
-			markidx,markOffset := reader.MarkIndex()
-			pok,pkg,err := con.protocol.ParserProtocol(reader)//解析出实际的协议宝
-			if err != nil{
+	}else{
+		bufsize = 4096
+	}
+	reader := NewDxReader(con.con,int(bufsize))
+	con.waitg.Add(1)
+	defer con.waitg.Done()
+	for{
+		select{
+		case <-con.srvcancelChan:
+			return
+		case <-con.selfcancelchan:
+			return
+		default:
+			rlen,e,_ := reader.ReadAppend()
+			if e!=nil || rlen==0{
 				loger := con.conHost.Logger()
 				if loger != nil{
 					loger.SetPrefix("[Error]")
 					if con.IsClientcon{
-						loger.Println("读取失败，程序准备断开：",err.Error())
+						loger.Println("读取失败，程序准备断开：",e.Error())
 					}else{
-						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error()))
 					}
 				}
-				con.Close()
 				return
 			}
-			if !pok{
-				reader.RestoreMark(markidx,markOffset)
-				break
-			}else{
-				//如果协议包不为空，就发送出去，然后等待处理
-				if pkg != nil{
-					con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
+			con.ReciveDataLen.AddByteSize(uint32(rlen))
+			con.conHost.AddRecvDataLen(uint32(rlen))
+			for{
+				markidx,markOffset := reader.MarkIndex()
+				pok,pkg,err := con.protocol.ParserProtocol(reader)//解析出实际的协议宝
+				if err != nil{
+					loger := con.conHost.Logger()
+					if loger != nil{
+						loger.SetPrefix("[Error]")
+						if con.IsClientcon{
+							loger.Println("读取失败，程序准备断开：",err.Error())
+						}else{
+							loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+						}
+					}
+					return
 				}
-				reader.ClearRead()
+				if !pok{
+					reader.RestoreMark(markidx,markOffset)
+					break
+				}else{
+					//如果协议包不为空，就发送出去，然后等待处理
+					if pkg != nil{
+						con.recvDataQueue <- pkg //发送到执行回收事件的解析队列中去
+					}
+					reader.ClearRead()
+				}
 			}
 		}
-
 	}
 }
 
 
 func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
+	con.waitg.Add(1)
 	IsRecvFunc := data[0].(bool)
 	if IsRecvFunc{ //接收函数
 		heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
 		timeoutChan := DxCommonLib.After(time.Second*2)
+		recvfor:
 		for{
 			select {
 			case data,ok := <-con.recvDataQueue:
-				if !ok || data == nil{
-					return
+				if ok && data != nil{
+					con.conHost.HandleRecvEvent(con,data)
+				}else{
+					break recvfor
 				}
-				con.conHost.HandleRecvEvent(con,data)
-			case <-con.conDisconnect:
-				return
+			case <-con.selfcancelchan:
+				break recvfor
+			case <-con.srvcancelChan:
+				break recvfor
 			case <-timeoutChan:
 				if con.IsClientcon{ //客户端连接
 					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
@@ -200,49 +241,67 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 						loger.SetPrefix("[Debug]")
 						loger.Println(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开",con.RemoteAddr()))
 					}
-					con.Close()
-					return
+					break recvfor
 				}
 				timeoutChan = DxCommonLib.After(time.Second*2) //继续下一次的判定
 			}
 		}
 	}else{
+		sendfor:
 		for{
 			select{
 			case data, ok := <-con.sendDataQueue:
-				if !ok || data == nil{
-					return
+				if ok && data != nil{
+					con.conHost.SendData(con,data)
+				}else{
+
+					break sendfor
 				}
-				con.conHost.SendData(con,data)
-			case <-con.conDisconnect:
-				return
+			case <-con.selfcancelchan:
+				break sendfor
+			case <-con.srvcancelChan:
+				break sendfor
 			}
 		}
 	}
+	con.waitg.Done()
+	con.Close()
 }
 
 
 func (con *DxNetConnection)Close()  {
-	if con.unActive{
+	if con.UnActiveSet(true){
 		return
 	}
-	if con.conDisconnect !=nil{
-		close(con.conDisconnect)
-		con.conDisconnect = nil
-	}
 	con.con.Close()
-	con.conHost.HandleDisConnectEvent(con)
-	con.unActive = true
 	con.useData = nil
+	close(con.selfcancelchan)
+	con.conHost.HandleDisConnectEvent(con)
+	con.waitg.Wait()
 	if con.recvDataQueue != nil{
 		close(con.recvDataQueue)
+		con.recvDataQueue = nil
 	}
 	if con.sendDataQueue != nil{
 		close(con.sendDataQueue)
+		con.sendDataQueue = nil
+	}
+	if !con.IsClientcon{
+		con.protocol = nil
+		con.localAddr = ""
+		con.remoteAddr = ""
+		con.con = nil
+		con.ConHandle = 0
+		con.conHost = nil
+		con.ReciveDataLen.Init()
+		con.SendDataLen.Init()
+		netpool.Put(con)
 	}
 }
 
 func (con *DxNetConnection)conRead()  {
+	con.waitg.Add(1)
+	defer con.waitg.Done()
 	encoder := con.conHost.GetCoder()
 	var timeout int32
 	if con.conHost.EnableHeartCheck(){
@@ -263,90 +322,97 @@ func (con *DxNetConnection)conRead()  {
 	var err error
 	var readbuf,tmpBuffer []byte
 	for{
-		if timeout != 0{
-			con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
-		}
-		if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
-			loger := con.conHost.Logger()
-			if loger != nil{
-				loger.SetPrefix("[Error]")
-				if con.IsClientcon{
-					loger.Println("读取失败，程序准备断开：",err.Error())
-				}else{
-					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
-				}
-			}
-			con.Close()
+		select{
+		case <-con.srvcancelChan:
 			return
-		}
-		if rln < 3{
-			if encoder.UseLitterEndian(){
-				ln = uint32(binary.LittleEndian.Uint16(buf[:rln]))
-			}else{
-				ln = uint32(binary.BigEndian.Uint16(buf[:rln]))
+		case <-con.selfcancelchan:
+			return
+		default:
+			if timeout != 0{
+				con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 			}
-		}else{
-			if encoder.UseLitterEndian(){
-				ln = binary.LittleEndian.Uint32(buf[:rln])
-			}else{
-				ln = binary.BigEndian.Uint32(buf[:rln])
-			}
-		}
-		pkglen := ln//包长度
-		if pkglen > uint32(maxbuflen){
-			if lastReadBufLen < pkglen{
-				tmpBuffer = make([]byte,pkglen)
-			}
-			readbuf = tmpBuffer
-			lastReadBufLen = pkglen
-		}else{
-			readbuf = buf
-		}
-		lastread = 0
-		if pkglen > 0{
-			for{
-				if timeout != 0{
-					con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
-				}
-				if rln,err = con.con.Read(readbuf[lastread:pkglen]);err !=nil || rln ==0 {
-					loger := con.conHost.Logger()
-					if loger != nil{
-						loger.SetPrefix("[Error]")
-						if con.IsClientcon{
-							loger.Println("读取失败，程序准备断开：",err.Error())
-						}else{
-							loger.Println(fmt.Sprintf("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
-						}
-					}
-					con.Close()
-					return
-				}
-				lastread += rln
-				if uint32(lastread) >= pkglen {
-					break
-				}
-			}
-			//读取成功，解码数据
-			if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
-				con.conHost.AddRecvDataLen(uint32(pkglen))
-				con.recvDataQueue <- obj //发送到执行回收事件的解析队列中去
-			}else{
+			if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
 				loger := con.conHost.Logger()
 				if loger != nil{
 					loger.SetPrefix("[Error]")
 					if con.IsClientcon{
-						loger.Println("无效的数据包，异常，程序准备断开：")
+						loger.Println("读取失败，程序准备断开：",err.Error())
 					}else{
-						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr()))
+						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 					}
 				}
-				con.Close()//无效的数据包
+				con.Close()
 				return
 			}
-		}
-		con.LastValidTime = time.Now()
-		if timeout != 0{
-			con.con.SetReadDeadline(time.Time{})
+			if rln < 3{
+				if encoder.UseLitterEndian(){
+					ln = uint32(binary.LittleEndian.Uint16(buf[:rln]))
+				}else{
+					ln = uint32(binary.BigEndian.Uint16(buf[:rln]))
+				}
+			}else{
+				if encoder.UseLitterEndian(){
+					ln = binary.LittleEndian.Uint32(buf[:rln])
+				}else{
+					ln = binary.BigEndian.Uint32(buf[:rln])
+				}
+			}
+			pkglen := ln//包长度
+			if pkglen > uint32(maxbuflen){
+				if lastReadBufLen < pkglen{
+					tmpBuffer = make([]byte,pkglen)
+				}
+				readbuf = tmpBuffer
+				lastReadBufLen = pkglen
+			}else{
+				readbuf = buf
+			}
+			lastread = 0
+			if pkglen > 0{
+				for{
+					if timeout != 0{
+						con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+					}
+					if rln,err = con.con.Read(readbuf[lastread:pkglen]);err !=nil || rln ==0 {
+						loger := con.conHost.Logger()
+						if loger != nil{
+							loger.SetPrefix("[Error]")
+							if con.IsClientcon{
+								loger.Println("读取失败，程序准备断开：",err.Error())
+							}else{
+								loger.Println(fmt.Sprintf("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+							}
+						}
+						con.Close()
+						return
+					}
+					lastread += rln
+					if uint32(lastread) >= pkglen {
+						break
+					}
+				}
+				//读取成功，解码数据
+				if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
+					con.conHost.AddRecvDataLen(uint32(pkglen))
+					con.recvDataQueue <- obj //发送到执行回收事件的解析队列中去
+				}else{
+					loger := con.conHost.Logger()
+					if loger != nil{
+						loger.SetPrefix("[Error]")
+						if con.IsClientcon{
+							loger.Println("无效的数据包，异常，程序准备断开：")
+						}else{
+							loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr()))
+						}
+					}
+					con.Close()//无效的数据包
+					return
+				}
+			}
+			con.LastValidTime = time.Now()
+			if timeout != 0{
+				con.con.SetReadDeadline(time.Time{})
+			}
 		}
 	}
 }
@@ -378,6 +444,9 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 		select {
 		case con.sendDataQueue <- obj:
 				return true
+		case <-con.srvcancelChan:
+			con.Close()
+			return false
 		case <-DxCommonLib.After(time.Millisecond*500):
 				con.Close()
 				return false
@@ -390,4 +459,15 @@ func (con *DxNetConnection)Address()string  {
 		con.localAddr = con.con.LocalAddr().String()
 	}
 	return con.localAddr
+}
+
+var(
+	netpool		sync.Pool
+)
+func GetConnection()*DxNetConnection  {
+	obj := netpool.Get()
+	if obj == nil{
+		return new(DxNetConnection)
+	}
+	return obj.(*DxNetConnection)
 }

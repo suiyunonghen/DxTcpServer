@@ -56,6 +56,16 @@ type(
 		ftpDirectorys		sync.Map
 		WelcomeMessage		string
 		anonymousUser		ftpUser
+		PublicIP			string   		//对外开放的IP服务地址
+		dataServer			*ftpDataServer  //对外的被动二进制服务
+	}
+
+
+	//被动模式下建立的数据服务器
+	ftpDataServer  struct{
+		ServerBase.DxTcpServer
+		ownerFtp			*FTPServer
+		port				int
 	}
 
 	ftpcmd		interface{
@@ -107,6 +117,13 @@ func (cmd cmdBase)MustLogin() bool{
 
 func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//被动传输模式
+	if  srv.dataServer != nil{
+		//srv.dataServer.port
+	}
+	listenIP := srv.PublicIP
+	if len(listenIP)==0{
+		listenIP = con.Address()
+	}
 	con.WriteObject(&ftpResponsePkg{500,"Commands not supported temporarily",false})
 }
 
@@ -235,7 +252,7 @@ func (coder *FtpProtocol)UseLitterEndian()bool  {
 }
 
 func (coder *FtpProtocol)MaxBufferLen()uint16  {
-	return 0
+	return 512
 }
 
 //实现FTP协议接口
@@ -319,4 +336,18 @@ func NewFtpServer()*FTPServer  {
 		}
 	}
 	return result
+}
+
+func (srv *FTPServer)createDataServer(port int)bool  {
+	if srv.dataServer == nil{
+		srv.dataServer = new(ftpDataServer)
+		srv.dataServer.ownerFtp = srv
+		srv.dataServer.SrvLogger = srv.SrvLogger
+	}
+	srv.dataServer.port = port
+	srv.Close()
+	if !srv.dataServer.Active(){
+		srv.dataServer.Open(fmt.Sprintf(":%d",port))
+	}
+	return true
 }

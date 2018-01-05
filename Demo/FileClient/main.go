@@ -23,8 +23,8 @@ func main() {
 	}
 	mItem := PopMenu.Items().AddItem("下载文件")
 	mItem.OnClick = func(sender interface{}) {
-		fclient.DownLoadFile("TCCEE_x64_v5.3.8%289.0a%29.exe", "d:\\TCCEE_x64_v5.3.8%289.0a%29.exe")
-		fclient.DownLoadFile("GitHubDesktopSetup.exe", "d:\\GitHubDesktopSetup.exe")
+		fclient.DownLoadFile("YNote.exe", "d:\\YNote.exe")
+		fclient.DownLoadFile("cloudmusicsetup_2_2_1[192801].exe", "d:\\cloudmusicsetup_2_2_1[192801].exe")
 	}
 	mItem = PopMenu.Items().AddItem("-")
 	mItem = PopMenu.Items().AddItem("退出")

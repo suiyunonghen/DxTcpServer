@@ -10,6 +10,7 @@ import (
 	"sync"
 	"fmt"
 	"log"
+	"context"
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
@@ -20,6 +21,14 @@ type DxDiskSize struct {
 	SizeMB		uint16
 	SizeGB		uint16
 	SizeTB		uint32
+}
+
+func (size *DxDiskSize)Init()  {
+	size.SizeByte = 0
+	size.SizeKB = 0
+	size.SizeGB = 0
+	size.SizeMB = 0
+	size.SizeTB = 0
 }
 
 func (size *DxDiskSize)Add(nsize *DxDiskSize)  {
@@ -126,6 +135,8 @@ type DxTcpServer struct {
 	dataBuffer				chan *bytes.Buffer   //缓存列表
 	SrvLogger				*log.Logger
 	bufferPool				sync.Pool
+	cancelfunc				func()
+	waitg					sync.WaitGroup
 	sync.RWMutex
 }
 type GIterateClientFunc func(con *DxNetConnection)
@@ -136,7 +147,7 @@ func (srv *DxTcpServer)Open(addr string) error {
 	}
 	srv.listener = ls
 	srv.isActivetag = 1
-	go srv.acceptClients()
+	DxCommonLib.Post(srv)
 	return nil
 }
 
@@ -153,11 +164,9 @@ func (srv *DxTcpServer)Close()  {
 	if nil != srv.listener {
 		srv.listener.Close()
 	}
-	//fmt.Println("还剩下",len(srv.clients))
-	for k, c := range srv.clients {
-		c.Close()
-		delete(srv.clients, k)
-	}
+	srv.cancelfunc()
+	srv.waitg.Wait()
+	srv.clients = nil
 }
 
 func (srv *DxTcpServer)Logger()*log.Logger  {
@@ -177,22 +186,27 @@ func (srv *DxTcpServer)AddSendDataLen(datalen uint32){
 	srv.Unlock()
 }
 
-func (srv *DxTcpServer)acceptClients()  {
+func (srv *DxTcpServer)Run()  {
+	ctx,cancelfunc := context.WithCancel(context.Background())
+	srv.cancelfunc = cancelfunc
 	for{
 		conn, err := srv.listener.Accept()
 		if err != nil {
 			srv.listener = nil
 			return
 		}
-		dxcon := new(DxNetConnection)
+		srv.waitg.Add(1)
+		dxcon := GetConnection()
 		dxcon.con = conn
-		dxcon.unActive = false
+		dxcon.unActive.Store(false)
+		dxcon.srvcancelChan = ctx.Done()
+		dxcon.selfcancelchan = make(chan struct{})
 		dxcon.LimitSendPkgCout = srv.LimitSendPkgCount
 		dxcon.LoginTime = time.Now() //登录时间
 		dxcon.ConHandle = uint(uintptr(unsafe.Pointer(dxcon)))
 		dxcon.conHost = srv
 		if srv.clients == nil{
-			srv.clients = make(map[uint]*DxNetConnection)
+			srv.clients = make(map[uint]*DxNetConnection,100)
 		}
 		srv.Lock()
 		srv.clients[dxcon.ConHandle] = dxcon
@@ -216,6 +230,7 @@ func (srv *DxTcpServer)HandleDisConnectEvent(con *DxNetConnection) {
 	con.SetUseData(nil)
 	delete(srv.clients,con.ConHandle)
 	srv.Unlock()
+	srv.waitg.Done()
 }
 
 func (srv *DxTcpServer)SendHeart(con *DxNetConnection)  {
@@ -266,8 +281,16 @@ func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
 	return true
 }
 
+func (srv *DxTcpServer)doOnSendData(params ...interface{})  {
+	if params[4].(bool){
+		srv.OnSendData(params[0].(*DxNetConnection),params[1],params[2].(int),params[3].(bool))
+	}else{
+		srv.AfterEncodeData(params[0].(*DxNetConnection),params[1],params[2].(int),params[3].(bool))
+	}
+}
+
 func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
-	if con.unActive{
+	if con.UnActive(){
 		return false
 	}
 	coder := srv.encoder
@@ -290,7 +313,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		}
 		if err := coder.Encode(DataObj,sendBuffer);err==nil{
 			if srv.OnSendData == nil && srv.AfterEncodeData != nil{
-				srv.AfterEncodeData(con,DataObj,0,false)
+				DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,0,false,false)
 			}
 			retbytes = sendBuffer.Bytes()
 			lenb := len(retbytes)
@@ -311,7 +334,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			}
 			sendok = con.writeBytes(retbytes)
 		}else if srv.OnSendData == nil && srv.AfterEncodeData != nil{
-			srv.AfterEncodeData(con,DataObj,0,false)
+			DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,0,false,false)
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
 	}else if con.protocol != nil{
@@ -328,7 +351,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		srv.ReciveBuffer(sendBuffer)//回收
 	}
 	if srv.OnSendData != nil{
-		srv.OnSendData(con,DataObj,haswrite,sendok)
+		DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,haswrite,sendok,true)
 	}
 	if sendok{
 		atomic.AddUint64(&srv.SendRequestCount,1) //增加回复的请求数量
@@ -390,3 +413,4 @@ func (srv *DxTcpServer)Active()bool  {
 	activeflag := atomic.LoadInt32(&srv.isActivetag)
 	return activeflag != 0
 }
+
