@@ -28,6 +28,7 @@ type IConHost interface {
 	Logger()*log.Logger
 	AddRecvDataLen(datalen uint32)
 	AddSendDataLen(datalen uint32)
+	Done()<-chan struct{}
 }
 
 //编码器
@@ -68,7 +69,6 @@ type DxNetConnection struct {
 	sendDataQueue	      	chan interface{}
 	recvDataQueue		    chan interface{}
 	LimitSendPkgCout	    uint8
-	srvcancelChan			<-chan struct{}
 	selfcancelchan			chan struct{}
 	IsClientcon		    	bool
 	waitg					sync.WaitGroup
@@ -155,10 +155,11 @@ func (con *DxNetConnection)conCustomRead()  {
 	}
 	reader := NewDxReader(con.con,int(bufsize))
 	con.waitg.Add(1)
+	srvcancelChan := con.conHost.Done()
 	defer con.waitg.Done()
 	for{
 		select{
-		case <-con.srvcancelChan:
+		case <-srvcancelChan:
 			return
 		case <-con.selfcancelchan:
 			return
@@ -212,6 +213,7 @@ func (con *DxNetConnection)conCustomRead()  {
 func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 	con.waitg.Add(1)
 	IsRecvFunc := data[0].(bool)
+	srvcancelChan := con.conHost.Done()
 	if IsRecvFunc{ //接收函数
 		heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
 		timeoutChan := DxCommonLib.After(time.Second*2)
@@ -226,7 +228,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 				}
 			case <-con.selfcancelchan:
 				break recvfor
-			case <-con.srvcancelChan:
+			case <-srvcancelChan:
 				break recvfor
 			case <-timeoutChan:
 				if con.IsClientcon{ //客户端连接
@@ -259,7 +261,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 				}
 			case <-con.selfcancelchan:
 				break sendfor
-			case <-con.srvcancelChan:
+			case <-srvcancelChan:
 				break sendfor
 			}
 		}
@@ -317,13 +319,14 @@ func (con *DxNetConnection)conRead()  {
 	}
 	maxbuflen := encoder.MaxBufferLen()
 	buf := make([]byte, maxbuflen)
+	srvcancelChan := con.conHost.Done()
 	var ln,lastReadBufLen uint32=0,0
 	var rln,lastread int
 	var err error
 	var readbuf,tmpBuffer []byte
 	for{
 		select{
-		case <-con.srvcancelChan:
+		case <-srvcancelChan:
 			return
 		case <-con.selfcancelchan:
 			return
@@ -444,7 +447,7 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 		select {
 		case con.sendDataQueue <- obj:
 				return true
-		case <-con.srvcancelChan:
+		case <-con.conHost.Done():
 			con.Close()
 			return false
 		case <-DxCommonLib.After(time.Millisecond*500):

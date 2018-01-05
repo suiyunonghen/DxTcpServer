@@ -10,7 +10,6 @@ import (
 	"sync"
 	"fmt"
 	"log"
-	"context"
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
@@ -135,7 +134,7 @@ type DxTcpServer struct {
 	dataBuffer				chan *bytes.Buffer   //缓存列表
 	SrvLogger				*log.Logger
 	bufferPool				sync.Pool
-	cancelfunc				func()
+	srvCloseChan			chan struct{}
 	waitg					sync.WaitGroup
 	sync.RWMutex
 }
@@ -164,7 +163,7 @@ func (srv *DxTcpServer)Close()  {
 	if nil != srv.listener {
 		srv.listener.Close()
 	}
-	srv.cancelfunc()
+	close(srv.srvCloseChan)
 	srv.waitg.Wait()
 	srv.clients = nil
 }
@@ -186,9 +185,12 @@ func (srv *DxTcpServer)AddSendDataLen(datalen uint32){
 	srv.Unlock()
 }
 
+func (srv *DxTcpServer) Done()<-chan struct{}  {
+	return srv.srvCloseChan
+}
+
 func (srv *DxTcpServer)Run()  {
-	ctx,cancelfunc := context.WithCancel(context.Background())
-	srv.cancelfunc = cancelfunc
+	srv.srvCloseChan = make(chan struct{})
 	for{
 		conn, err := srv.listener.Accept()
 		if err != nil {
@@ -199,7 +201,6 @@ func (srv *DxTcpServer)Run()  {
 		dxcon := GetConnection()
 		dxcon.con = conn
 		dxcon.unActive.Store(false)
-		dxcon.srvcancelChan = ctx.Done()
 		dxcon.selfcancelchan = make(chan struct{})
 		dxcon.LimitSendPkgCout = srv.LimitSendPkgCount
 		dxcon.LoginTime = time.Now() //登录时间

@@ -22,10 +22,15 @@ type DxTcpClient struct {
 	TimeOutSeconds	int32
 	ClientLogger *log.Logger
 	sendBuffer	*bytes.Buffer
+	donechan		chan struct{}
 }
 
 func (client *DxTcpClient)Active() bool {
 	return !client.Clientcon.UnActive()
+}
+
+func (client *DxTcpClient)Done()<-chan struct{}  {
+	return  client.donechan
 }
 
 func (client *DxTcpClient)Connect(addr string)error {
@@ -34,6 +39,7 @@ func (client *DxTcpClient)Connect(addr string)error {
 	}
 	if tcpAddr, err := net.ResolveTCPAddr("tcp4", addr);err == nil{
 		if conn, err := net.DialTCP("tcp", nil, tcpAddr);err == nil{ //创建一个TCP连接:TCPConn
+			client.donechan = make(chan struct{})
 			client.Clientcon.unActive.Store(false)
 			client.Clientcon.con = conn
 			client.Clientcon.LoginTime = time.Now() //登录时间
@@ -86,6 +92,7 @@ func (client *DxTcpClient)HeartTimeOutSeconds() int32 {
 }
 
 func (client *DxTcpClient)Close()  {
+	close(client.donechan)
 	client.Clientcon.Close()
 }
 
