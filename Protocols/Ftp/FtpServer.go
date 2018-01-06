@@ -143,6 +143,13 @@ var (
 	noDirError = errors.New("Not a directory")
 )
 
+//等待被动连接OK
+func (client *ftpClientBinds)waitPasvConOk()  {
+	if client.datacon == nil{
+		client.wg.Wait()
+	}
+}
+
 func init() {
 	for k, v := range ftpCmds {
 		if v.IsFeatCmd() {
@@ -273,6 +280,7 @@ func (cmd cmdRETR)petrFile(params ...interface{})  {
 	buffer := srv.dataServer.GetBuffer()
 	maxsize := int64(srv.dataServer.GetCoder().MaxBufferLen())
 	lreader := io.LimitedReader{f,maxsize}
+	client.waitPasvConOk()
 	for{
 		rl,err := io.Copy(buffer,&lreader)
 		lreader.N = maxsize
@@ -394,7 +402,7 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		})
 
 		buffer.WriteString("\r\n")
-		client.wg.Wait()
+		client.waitPasvConOk()
 		con.WriteObject(&ftpResponsePkg{226,"Closing data connection, sent " + strconv.Itoa(buffer.Len()) + " bytes",false})
 		buffer.WriteTo(client.datacon)
 		client.datacon.Close()
@@ -433,7 +441,7 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		return nil
 	})
 	buffer.WriteString("\r\n")
-	client.wg.Wait()
+	client.waitPasvConOk()
 	con.WriteObject(&ftpResponsePkg{226,"Closing data connection, sent " + strconv.Itoa(buffer.Len()) + " bytes",false})
 	buffer.WriteTo(client.datacon)
 	client.datacon.Close()
@@ -734,7 +742,7 @@ func NewFtpServer()*FTPServer  {
 	result.OnClientDisConnected = func(con *ServerBase.DxNetConnection) {
 		v := con.GetUseData()
 		if v != nil{
-			if client,ok := v.(*ftpClientBinds);ok{
+			if client,ok := v.(*ftpClientBinds);ok && client != nil{
 				result.freeFtpClient(client)
 			}
 		}
@@ -791,6 +799,11 @@ func (srv *FTPServer)checkDataServerIdle(params ...interface{})  {
 	}
 }
 
+func (srv *FTPServer)dataClientDisconnect(con *ServerBase.DxNetConnection)  {
+	if v,ok := con.GetUseData().(*ftpClientBinds);ok && v!= nil{
+		v.datacon = nil
+	}
+}
 
 func (srv *FTPServer)createDataServer(port uint16)bool  {
 	if srv.dataServer == nil{
@@ -802,6 +815,7 @@ func (srv *FTPServer)createDataServer(port uint16)bool  {
 		srv.dataServer.clientConChan = make(chan*ServerBase.DxNetConnection)
 		srv.dataServer.OnRecvData = srv.dataServer.dataRecvData //上传文件的时候
 		srv.dataServer.OnClientConnect = srv.dataServer.ClientConnect
+		srv.dataServer.OnClientDisConnected = srv.dataClientDisconnect
 	}
 	srv.dataServer.lastDataTime.Store(time.Time{})
 	srv.dataServer.port = port
