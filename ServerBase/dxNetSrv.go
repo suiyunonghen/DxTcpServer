@@ -119,6 +119,7 @@ type DxTcpServer struct {
 	OnRecvData				GOnRecvDataEvent
 	OnClientConnect			GConnectEvent
 	OnClientDisConnected	GConnectEvent
+	OnSrvClose				func()
 	OnSendData				GOnSendDataEvent
 	AfterEncodeData			GOnSendDataEvent
 	TimeOutSeconds			int32
@@ -160,6 +161,9 @@ func (srv *DxTcpServer)Close()  {
 	if !atomic.CompareAndSwapInt32(&srv.isActivetag,1,0){
 		return
 	}
+	if srv.OnSrvClose != nil{
+		srv.OnSrvClose()
+	}
 	if nil != srv.listener {
 		srv.listener.Close()
 	}
@@ -187,6 +191,10 @@ func (srv *DxTcpServer)AddSendDataLen(datalen uint32){
 
 func (srv *DxTcpServer) Done()<-chan struct{}  {
 	return srv.srvCloseChan
+}
+
+func (client *DxTcpServer)CustomRead(con *DxNetConnection)bool  {
+	return false
 }
 
 func (srv *DxTcpServer)Run()  {
@@ -339,17 +347,26 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
 	}else if con.protocol != nil{
-		sendBuffer := srv.GetBuffer()
-		if retbytes,err := con.protocol.PacketObject(DataObj,sendBuffer);err==nil{
-			sendok = con.writeBytes(retbytes)
-		}else{
-			sendok = false
-			if srv.SrvLogger != nil{
-				srv.SrvLogger.SetPrefix("[Error]")
-				srv.SrvLogger.Println(fmt.Sprintf("协议打包失败：%s",err.Error()))
+		switch v := DataObj.(type){
+		case *bytes.Buffer:
+			sendok = con.writeBytes(v.Bytes())
+		case bytes.Buffer:
+
+		case []byte:
+			sendok = con.writeBytes(v)
+		default:
+			sendBuffer := srv.GetBuffer()
+			if retbytes,err := con.protocol.PacketObject(DataObj,sendBuffer);err==nil{
+				sendok = con.writeBytes(retbytes)
+			}else{
+				sendok = false
+				if srv.SrvLogger != nil{
+					srv.SrvLogger.SetPrefix("[Error]")
+					srv.SrvLogger.Println(fmt.Sprintf("协议打包失败：%s",err.Error()))
+				}
 			}
+			srv.ReciveBuffer(sendBuffer)//回收
 		}
-		srv.ReciveBuffer(sendBuffer)//回收
 	}
 	if srv.OnSendData != nil{
 		DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,haswrite,sendok,true)

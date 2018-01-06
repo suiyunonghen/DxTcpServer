@@ -142,6 +142,51 @@ func (reader *DxReader)Read(p []byte) (int, error)  {
 	return rl+rlen,err
 }
 
+func (reader *DxReader)WriteTo(w io.Writer,wrlen int)(int)  {
+	if reader.IsEmpty(){
+		return 0
+	}
+	buf := reader.chainbuf[reader.ridx]
+	rlen := reader.bufsize-reader.r
+	if rlen >= wrlen{
+		//直接读完
+		w.Write(buf[reader.r:reader.r+wrlen])
+		reader.r+=wrlen
+		return rlen
+	}
+	if rlen > 0{
+		w.Write(buf[reader.r:])
+		wrlen -= rlen
+	}
+	for i := reader.ridx + 1;i < reader.widx;i++{
+		reader.ridx += 1
+		reader.r = 0
+		buf = reader.chainbuf[i]
+		if reader.bufsize >= wrlen{
+			w.Write(buf[:wrlen])
+			reader.r+=wrlen
+			return rlen+wrlen
+		}
+		w.Write(buf)
+		rlen += reader.bufsize
+		wrlen -= reader.bufsize
+	}
+	if reader.widx != reader.ridx{
+		buf = reader.chainbuf[reader.widx]
+		if reader.w >= wrlen{
+			w.Write(buf[:wrlen])
+			return rlen+wrlen
+		}
+		w.Write(buf[:reader.w])
+		rlen += reader.w
+		reader.r = reader.w
+		reader.ridx = reader.widx
+		wrlen -= reader.w
+	}
+	reader.ClearRead()
+	return rlen
+}
+
 func (reader *DxReader)IsEmpty()bool  {
 	return len(reader.chainbuf)==0 || reader.r==reader.w && reader.ridx==reader.widx
 }

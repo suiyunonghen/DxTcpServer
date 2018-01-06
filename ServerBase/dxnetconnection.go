@@ -29,6 +29,7 @@ type IConHost interface {
 	AddRecvDataLen(datalen uint32)
 	AddSendDataLen(datalen uint32)
 	Done()<-chan struct{}
+	CustomRead(con *DxNetConnection)bool //自定义读
 }
 
 //编码器
@@ -60,7 +61,7 @@ type DxNetConnection struct {
 	remoteAddr	            string
 	conHost		    	    IConHost  //连接宿主
 	protocol				IProtocol
-	LastValidTime		    time.Time //最后一次有效数据处理时间
+	LastValidTime		    atomic.Value //最后一次有效数据处理时间
 	LoginTime		    	time.Time //登录时间
 	ConHandle		   		uint
 	unActive				atomic.Value //已经关闭了
@@ -87,6 +88,15 @@ func (con *DxNetConnection)UnActive()bool  {
 	return true
 }
 
+
+func (con *DxNetConnection)Write(b []byte)(n int, err error){
+	if !con.UnActive(){
+		return con.con.Write(b)
+	}else{
+		return 0,nil
+	}
+}
+
 func (con *DxNetConnection)UnActiveSet(value bool)bool  {
 	v := con.unActive.Load()
 	con.unActive.Store(value)
@@ -102,13 +112,16 @@ func (con *DxNetConnection)GetUseData()interface{}  {
 
 func (con *DxNetConnection)Run()  {
 	//开始进入获取数据信息
-	con.LastValidTime = time.Now()
+	con.LastValidTime.Store(time.Now())
 	con.recvDataQueue = make(chan interface{},5)
 	//心跳或发送数据
 	DxCommonLib.PostFunc(con.checkHeartorSendData,true) //接收
 	if con.LimitSendPkgCout != 0{
 		con.sendDataQueue = make(chan interface{}, con.LimitSendPkgCout)
 		DxCommonLib.PostFunc(con.checkHeartorSendData,false)  //发送
+	}
+	if con.conHost.CustomRead(con){
+		return
 	}
 	if con.protocol != nil{
 		con.conCustomRead()
@@ -130,7 +143,7 @@ func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 			con.Close()
 			return false
 		}else{
-			con.LastValidTime = time.Now()
+			con.LastValidTime.Store(time.Now())
 			con.SendDataLen.AddByteSize(uint32(wln))
 			con.conHost.AddSendDataLen(uint32(wln))
 			haswrite+=wln
@@ -146,7 +159,7 @@ func (con *DxNetConnection)conCustomRead()  {
 	coder := con.conHost.GetCoder()
 	var bufsize uint16
 	if coder != nil{
-		bufsize = coder.MaxBufferLen() / 4
+		bufsize = coder.MaxBufferLen() / 2
 		if bufsize < 512{
 			bufsize = 512
 		}
@@ -232,18 +245,22 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 				break recvfor
 			case <-timeoutChan:
 				if con.IsClientcon{ //客户端连接
-					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
-						time.Now().Sub(con.LastValidTime).Seconds() > 60{ //60秒发送一次心跳
-						con.conHost.SendHeart(con)
+					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck(){
+						t := con.LastValidTime.Load().(time.Time)
+						if time.Now().Sub(t).Seconds() > 60 { //60秒发送一次心跳
+							con.conHost.SendHeart(con)
+						}
 					}
-				}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() &&
-					time.Now().Sub(con.LastValidTime).Seconds() > 120{//时间间隔的秒数,超过2分钟无心跳，关闭连接
-					loger := con.conHost.Logger()
-					if loger != nil{
-						loger.SetPrefix("[Debug]")
-						loger.Println(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开",con.RemoteAddr()))
+				}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() {
+					t := con.LastValidTime.Load().(time.Time)
+					if time.Now().Sub(t).Seconds() > 120 { //时间间隔的秒数,超过2分钟无心跳，关闭连接
+						loger := con.conHost.Logger()
+						if loger != nil {
+							loger.SetPrefix("[Debug]")
+							loger.Println(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开", con.RemoteAddr()))
+						}
+						break recvfor
 					}
-					break recvfor
 				}
 				timeoutChan = DxCommonLib.After(time.Second*2) //继续下一次的判定
 			}
@@ -412,7 +429,7 @@ func (con *DxNetConnection)conRead()  {
 					return
 				}
 			}
-			con.LastValidTime = time.Now()
+			con.LastValidTime.Store(time.Now())
 			if timeout != 0{
 				con.con.SetReadDeadline(time.Time{})
 			}

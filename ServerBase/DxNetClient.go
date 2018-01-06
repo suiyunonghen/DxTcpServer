@@ -29,6 +29,10 @@ func (client *DxTcpClient)Active() bool {
 	return !client.Clientcon.UnActive()
 }
 
+func (client *DxTcpClient)CustomRead(con *DxNetConnection)bool  {
+	return false
+}
+
 func (client *DxTcpClient)Done()<-chan struct{}  {
 	return  client.donechan
 }
@@ -169,7 +173,7 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 				}
 			}
 			sendok = con.writeBytes(retbytes)
-			con.LastValidTime = time.Now()
+			con.LastValidTime.Store(time.Now())
 		}
 		client.sendBuffer.Reset()
 		if client.sendBuffer.Cap() > int(client.encoder.MaxBufferLen()){
