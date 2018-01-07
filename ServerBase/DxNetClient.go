@@ -16,7 +16,7 @@ type DxTcpClient struct {
 	encoder		IConCoder
 	OnRecvData	GOnRecvDataEvent
 	OnSendHeart	GConnectEvent
-	OnClientconnect	GConnectEvent
+	OnClientconnect	 func(con *DxNetConnection)interface{}
 	OnClientDisConnected	GConnectEvent
 	OnSendData	GOnSendDataEvent
 	TimeOutSeconds	int32
@@ -29,7 +29,7 @@ func (client *DxTcpClient)Active() bool {
 	return !client.Clientcon.UnActive()
 }
 
-func (client *DxTcpClient)CustomRead(con *DxNetConnection)bool  {
+func (client *DxTcpClient)CustomRead(con *DxNetConnection,targetData interface{})bool  {
 	return false
 }
 
@@ -56,8 +56,8 @@ func (client *DxTcpClient)Connect(addr string)error {
 					client.Clientcon.protocol = protocol
 				}
 			}
-			client.HandleConnectEvent(&client.Clientcon)
-			DxCommonLib.Post(&client.Clientcon)//连接开始执行接收消息和发送消息的处理线程
+			result := client.HandleConnectEvent(&client.Clientcon)
+			DxCommonLib.PostFunc(client.Clientcon.run,result)//连接开始执行接收消息和发送消息的处理线程
 			return nil
 		}else{
 			return err
@@ -79,10 +79,11 @@ func (client *DxTcpClient)Logger()*log.Logger  {
 	return client.ClientLogger
 }
 
-func (client *DxTcpClient)HandleConnectEvent(con *DxNetConnection)  {
+func (client *DxTcpClient)HandleConnectEvent(con *DxNetConnection) interface{} {
 	if client.OnClientconnect!=nil{
-		client.OnClientconnect(con)
+		return client.OnClientconnect(con)
 	}
+	return nil
 }
 
 func (client *DxTcpClient)HandleDisConnectEvent(con *DxNetConnection) {
@@ -96,8 +97,10 @@ func (client *DxTcpClient)HeartTimeOutSeconds() int32 {
 }
 
 func (client *DxTcpClient)Close()  {
-	close(client.donechan)
-	client.Clientcon.Close()
+	if client.Active(){
+		close(client.donechan)
+		client.Clientcon.Close()
+	}
 }
 
 func (client *DxTcpClient)EnableHeartCheck()bool  {

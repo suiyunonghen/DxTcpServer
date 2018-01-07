@@ -63,7 +63,7 @@ func srvInfoHandler(w http.ResponseWriter, r *http.Request) {
 			client := new(userClient)
 			client.Index = idx + 1
 			client.ClientIp = v.RemoteAddr()
-			client.LastDataTime = v.LastValidTime.Format("2006-01-02 15:04:05")
+			client.LastDataTime = v.LastValidTime.Load().(time.Time).Format("2006-01-02 15:04:05")
 			client.LogTime = v.LoginTime.Format("2006-01-02 15:04:05")
 			client.SendDatas = template.HTML(v.SendDataLen.ToString(true))
 			client.RecvDatas = template.HTML(v.ReciveDataLen.ToString(true))

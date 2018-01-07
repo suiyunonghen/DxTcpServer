@@ -113,11 +113,12 @@ func (size *DxDiskSize)ToString(useHtmlTag bool)(result string)  {
 }
 
 type DxTcpServer struct {
+	DxCommonLib.GDxBaseObject
 	listener        		net.Listener
 	encoder					IConCoder
 	isActivetag				int32
 	OnRecvData				GOnRecvDataEvent
-	OnClientConnect			GConnectEvent
+	OnClientConnect			func(con *DxNetConnection)interface{}
 	OnClientDisConnected	GConnectEvent
 	OnSrvClose				func()
 	OnSendData				GOnSendDataEvent
@@ -156,6 +157,9 @@ func (srv *DxTcpServer)GetCoder()IConCoder{
 	return srv.encoder
 }
 
+func (srv *DxTcpServer) SubInit() {
+	srv.GDxBaseObject.SubInit(srv)
+}
 
 func (srv *DxTcpServer)Close()  {
 	if !atomic.CompareAndSwapInt32(&srv.isActivetag,1,0){
@@ -193,12 +197,23 @@ func (srv *DxTcpServer) Done()<-chan struct{}  {
 	return srv.srvCloseChan
 }
 
-func (client *DxTcpServer)CustomRead(con *DxNetConnection)bool  {
+func (srv *DxTcpServer)CustomRead(con *DxNetConnection,targetData interface{})bool  {
 	return false
 }
 
 func (srv *DxTcpServer)Run()  {
 	srv.srvCloseChan = make(chan struct{})
+	var host IConHost
+	if lastedHost := srv.LastedSubChild();lastedHost != nil{
+		if Ahost,ok := lastedHost.(IConHost);!ok{
+			host = srv
+		}else{
+			host = Ahost
+		}
+	}else{
+		host = srv
+	}
+
 	for{
 		conn, err := srv.listener.Accept()
 		if err != nil {
@@ -213,7 +228,7 @@ func (srv *DxTcpServer)Run()  {
 		dxcon.LimitSendPkgCout = srv.LimitSendPkgCount
 		dxcon.LoginTime = time.Now() //登录时间
 		dxcon.ConHandle = uint(uintptr(unsafe.Pointer(dxcon)))
-		dxcon.conHost = srv
+		dxcon.conHost = host
 		if srv.clients == nil{
 			srv.clients = make(map[uint]*DxNetConnection,100)
 		}
@@ -226,8 +241,8 @@ func (srv *DxTcpServer)Run()  {
 				dxcon.protocol = protocol
 			}
 		}
-		srv.HandleConnectEvent(dxcon)
-		DxCommonLib.Post(dxcon)//连接开始执行接收消息和发送消息的处理线程
+		result := srv.HandleConnectEvent(dxcon)
+		DxCommonLib.PostFunc(dxcon.run,result)//连接开始执行接收消息和发送消息的处理线程
 	}
 }
 
@@ -246,8 +261,15 @@ func (srv *DxTcpServer)SendHeart(con *DxNetConnection)  {
 
 }
 
-func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
+func (srv *DxTcpServer)GetBuffer(bufsize int)(retbuf *bytes.Buffer)  {
 	var ok bool
+	if bufsize <= 0{
+		if srv.encoder == nil{
+			bufsize = 4096
+		}else{
+			bufsize = int(srv.encoder.MaxBufferLen())
+		}
+	}
 	if srv.dataBuffer != nil{
 		select{
 		case retbuf,ok = <-srv.dataBuffer:
@@ -259,13 +281,13 @@ func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
 		}
 	}else if srv.dataBuffer == nil && srv.MaxDataBufCount != 0{
 		srv.dataBuffer = make(chan *bytes.Buffer,srv.MaxDataBufCount)
-		retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
+		retbuf = bytes.NewBuffer(make([]byte,0,bufsize))
 	}else{
 		retbuf = nil
 	}
 	if retbuf == nil{
 		if retbuf,ok = srv.bufferPool.Get().(*bytes.Buffer);!ok{
-			retbuf = bytes.NewBuffer(make([]byte,0,srv.encoder.MaxBufferLen()))
+			retbuf = bytes.NewBuffer(make([]byte,0,bufsize))
 		}
 	}
 	return
@@ -273,7 +295,7 @@ func (srv *DxTcpServer)GetBuffer()(retbuf *bytes.Buffer)  {
 
 func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
 	buf.Reset()
-	if buf.Cap() > int(srv.encoder.MaxBufferLen()){
+	if srv.encoder != nil && buf.Cap() > int(srv.encoder.MaxBufferLen()){
 		srv.bufferPool.Put(buf)
 		return true
 	}
@@ -307,7 +329,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 	var haswrite int = 0
 	if con.protocol == nil && coder!=nil{
 		var retbytes []byte
-		sendBuffer := srv.GetBuffer()
+		sendBuffer := srv.GetBuffer(0)
 		headLen := coder.HeadBufferLen()
 		if headLen > 2{
 			headLen = 4
@@ -355,7 +377,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		case []byte:
 			sendok = con.writeBytes(v)
 		default:
-			sendBuffer := srv.GetBuffer()
+			sendBuffer := srv.GetBuffer(0)
 			if retbytes,err := con.protocol.PacketObject(DataObj,sendBuffer);err==nil{
 				sendok = con.writeBytes(retbytes)
 			}else{
@@ -377,10 +399,11 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 	return sendok
 }
 
-func (srv *DxTcpServer)HandleConnectEvent(con *DxNetConnection)  {
+func (srv *DxTcpServer)HandleConnectEvent(con *DxNetConnection)interface{}  {
 	if srv.OnClientConnect!=nil{
-		srv.OnClientConnect(con)
+		return srv.OnClientConnect(con)
 	}
+	return nil
 }
 
 func (srv *DxTcpServer)EnableHeartCheck() bool {

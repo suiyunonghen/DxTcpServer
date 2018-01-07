@@ -182,7 +182,7 @@ func (srv *DxFileServer)download(filename string,fsize int64,position int64,resu
 		if datalen > blocklen{
 			datalen = blocklen
 		}
-		result.refData = srv.GetBuffer()
+		result.refData = srv.GetBuffer(0)
 		bt := result.refData.Bytes()
 		file.Seek(position,os.SEEK_SET)
 		file.Read(bt[:datalen])
@@ -199,7 +199,7 @@ func (srv *DxFileServer)download(filename string,fsize int64,position int64,resu
 
 func (srv *DxFileServer)getUpdateVersion(versionFile string,result *ResultPkg,con *ServerBase.DxNetConnection) {
 	if file,err := os.Open(versionFile);err==nil{
-		result.refData = srv.GetBuffer()
+		result.refData = srv.GetBuffer(0)
 		bt := result.refData.Bytes()
 		_,err := file.Read(bt[:2]) //读取头部信息
 		if err == nil && bt[0]=='U' && bt[1]=='P'{

@@ -37,12 +37,17 @@ func (coder *EchoCoder)ProtoName()string  {
 	return "ECHO"
 }
 
-func (coder *EchoCoder)ParserProtocol(r *ServerBase.DxReader)(parserOk bool,datapkg interface{},e error) { //解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
+func (coder *EchoCoder)ParserProtocol(r *ServerBase.DxReader,con *ServerBase.DxNetConnection)(parserOk bool,datapkg interface{},e error) { //解析协议，如果解析成功，返回true，根据情况可以设定返回协议数据包
 	count := r.Buffered()
 	if count > 0{
-		bt := make([]byte,count)
-		r.Read(bt)
-		datapkg = bt
+		if !con.IsClientcon{
+			r.WriteTo(con,count) //直接写入
+			datapkg = nil
+		}else{
+			bt := make([]byte,count)
+			r.Read(bt)
+			datapkg = bt
+		}
 		parserOk = true
 	}else{
 		datapkg = nil
@@ -72,9 +77,10 @@ func NewEchoServer()*ServerBase.DxTcpServer{
 		fmt.Println("客户端发送：",string(recvData.([]byte)))
 		con.WriteObject(recvData)
 	}
-	srv.OnClientConnect = func(con *ServerBase.DxNetConnection){
+	srv.OnClientConnect = func(con *ServerBase.DxNetConnection)interface{}{
 		//客户端登录了
 		fmt.Println("登录客户",srv.ClientCount())
+		return nil
 	}
 	return srv
 }

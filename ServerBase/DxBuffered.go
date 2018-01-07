@@ -152,7 +152,7 @@ func (reader *DxReader)WriteTo(w io.Writer,wrlen int)(int)  {
 		//直接读完
 		w.Write(buf[reader.r:reader.r+wrlen])
 		reader.r+=wrlen
-		return rlen
+		return wrlen
 	}
 	if rlen > 0{
 		w.Write(buf[reader.r:])
