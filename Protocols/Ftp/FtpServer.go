@@ -57,6 +57,8 @@ type(
 		typeAnsi		bool			//ANSIMode
 		datacon			*ServerBase.DxNetConnection //数据流的链接
 		cmdcon			*ServerBase.DxNetConnection //命令的链接
+		lastPos			int64
+		reNameFrom		string				//要重命名的文件或者目录
 	}
 
 	dataClientBinds		struct{
@@ -122,6 +124,12 @@ type(
 	cmdAPPE		struct{cmdBase}
 	cmdNLST		struct{cmdBase}
 	cmdNOOP		struct{cmdBase}
+	cmdMKD		struct{cmdBase}
+	cmdMODE		struct{cmdBase}
+	cmdOPTS		struct{cmdBase}
+	cmdREST		struct{cmdBase}
+	cmdRNFR		struct{cmdBase}
+	cmdRNTO		struct{cmdBase}
 )
 
 var (
@@ -143,23 +151,58 @@ var (
 		"RETR":			cmdRETR{},
 		"SIZE":			cmdSIZE{},
 		"MDTM":			cmdMDTM{},
+		"MKD":			cmdMKD{},
 		"NOOP":			cmdNOOP{},
 		"NLST":			cmdNLST{},
 		"STOR":			cmdSTOR{},
 		"DELE":			cmdDELE{},
+		"MODE":			cmdMODE{},
+		"OPTS":			cmdOPTS{},
+		"REST":			cmdREST{},
+		"RNFR":			cmdRNFR{},
+		"RNTO":			cmdRNTO{},
 		}
-	featCmds			string
 	dirNoExistError = errors.New("Directors not Exists")
 	noDirError = errors.New("Not a directory")
+	noParamPkg = ftpResponsePkg{553,"action aborted, required param missing",false}
+	obsoletePkg = ftpResponsePkg{202,"Obsolete",false}
+	okpkg = ftpResponsePkg{200,"OK",false}
+	dataTransferStartPkg =ftpResponsePkg{150,"Data transfer starting",false}
+	openAsCiiModePkg = ftpResponsePkg{150,"Opening ASCII mode data connection for file list",false}
+	noDirPkg = ftpResponsePkg{550,"Not a directory",false}
+	dataConnectionFailedPkg = ftpResponsePkg{425,"Data connection failed",false}
+	tpSetApkg = ftpResponsePkg{200,"Type set to ASCII",false}
+	tbSetBpkg = ftpResponsePkg{200,"Type set to binary",false}
+	featcmdPkg = ftpResponsePkg{211,"",true}
+	logokpkg = ftpResponsePkg{230,"user login success!",false}
+	logfailedpkg = ftpResponsePkg{530,"Password error, user logon failed",false}
+	winTypePkg = ftpResponsePkg{215,"Windows Type: L8",false}
+	unixTypePkg = ftpResponsePkg{215,"UNIX Type: L8",false}
+	passWordPkg = ftpResponsePkg{331,"Please enter a password",false}
+	canNotLogPkg = ftpResponsePkg{530,"User does not exist and cannot log on",false}
+	byePkg = ftpResponsePkg{221,"Byebye",false}
+	pathNoFile = ftpResponsePkg{550,"Path Is not a File",false}
+	fileDelPkg = ftpResponsePkg{250,"File deleted",false}
+	storeFileFpkg = ftpResponsePkg{450,"can not Store File: has a Same Name Directory",false}
+	dirCreateedPkg = ftpResponsePkg{257,"Directory created OK",false}
+	modeobsoletePkg= ftpResponsePkg{504,"MODE is an obsolete command",false}
+	utf8OnOffPkg = ftpResponsePkg{550,"Params Must 'UTF8 ON(OFF)'",false}
+	Utf8OnPkg = ftpResponsePkg{200,"UTF8 mode enabled",false}
+	Utf8ffPkg = ftpResponsePkg{550,"UTF8 mode disabled",false}
+	invalidateFilePosPkg = ftpResponsePkg{550,"invalidate File Position",false}
+	rnfrCmdPkg = ftpResponsePkg{350,"Please Send RNTO Command To Set New Name.",false}
+	frenameOkpkg = ftpResponsePkg{250,"File renamed",false}
 )
 
 
 func init() {
+	featCmds := ""
 	for k, v := range ftpCmds {
 		if v.IsFeatCmd() {
 			featCmds = featCmds + " " + k + "\n"
 		}
 	}
+	featcmdPkg.responseMsg = featCmds
 }
 
 func (cmd cmdBase)IsFeatCmd() bool{
@@ -186,7 +229,7 @@ func (cmd cmdALLO)MustLogin() bool{
 }
 
 func (cmd cmdALLO)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
-	con.WriteObject(&ftpResponsePkg{202,"Obsolete",false})
+	con.WriteObject(&obsoletePkg)
 }
 
 func (cmd cmdNOOP)MustLogin() bool{
@@ -194,23 +237,108 @@ func (cmd cmdNOOP)MustLogin() bool{
 }
 
 func (cmd cmdNOOP) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
-	con.WriteObject(&ftpResponsePkg{200,"OK",false})
+	//保证心跳的
+	con.WriteObject(&okpkg)
+}
+
+func (cmd cmdRNTO) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
+	if len(paramstr) == 0{
+		con.WriteObject(&noParamPkg)
+		return
+	}
+	client := con.GetUseData().(*ftpClientBinds)
+	toPath := srv.localPath(srv.buildPath(client.curPath,paramstr))
+	frompath := srv.localPath(client.reNameFrom)
+	if err := os.Rename(frompath,toPath);err!=nil{
+		con.WriteObject(&ftpResponsePkg{550,fmt.Sprintf("ReName File or Dir Failed: ",err.Error()),false})
+	}else{
+		con.WriteObject(&frenameOkpkg)
+	}
+	client.reNameFrom = ""
+}
+
+func (cmd cmdRNFR) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//重命名，RNFR <old path>,该命令表示重新命名文件，该命令的下一条命令用RNTO指定新的文件名。
+	//RNTO <new path>,该命令和RNFR命令共同完成对文件的重命名。
+	if len(paramstr) == 0{
+		con.WriteObject(&noParamPkg)
+		return
+	}
+	client := con.GetUseData().(*ftpClientBinds)
+	client.reNameFrom = srv.buildPath(client.curPath,paramstr)
+	con.WriteObject(&rnfrCmdPkg)
+}
+
+func (cmd cmdMODE) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
+	if strings.ToUpper(paramstr) == "S" {
+		con.WriteObject(&okpkg)
+	} else {
+		con.WriteObject(&modeobsoletePkg)
+	}
+}
+
+func (cmd cmdREST) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
+	lastFilePos,err := strconv.ParseInt(paramstr, 10, 64)
+	if err != nil {
+		con.WriteObject(&invalidateFilePosPkg)
+		return
+	}
+	client := con.GetUseData().(*ftpClientBinds)
+	client.lastPos = lastFilePos
+	con.WriteObject(&ftpResponsePkg{350,fmt.Sprintln("Start transfer from: ", lastFilePos),false})
+}
+
+func (cmd cmdMKD)  Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//新建目录
+	if len(paramstr) == 0{
+		con.WriteObject(&noParamPkg)
+		return
+	}
+	client := con.GetUseData().(*ftpClientBinds)
+	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
+	if err := os.Mkdir(touploadpath,os.ModePerm);err!=nil{
+		con.WriteObject(&ftpResponsePkg{550,fmt.Sprintln("make Directory Failed: ", err),false})
+	}else{
+		con.WriteObject(&dirCreateedPkg)
+	}
+}
+
+func (cmd cmdOPTS)  Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string){
+	//命令的传输模式
+	parts := strings.Fields(paramstr)
+	if len(parts) != 2 {
+		con.WriteObject(&utf8OnOffPkg)
+		return
+	}
+	if strings.ToUpper(parts[0]) != "UTF8" {
+		con.WriteObject(&utf8OnOffPkg)
+		return
+	}
+	if strings.ToUpper(parts[1]) == "ON" {
+		con.WriteObject(&Utf8OnPkg)
+	} else {
+		con.WriteObject(&Utf8ffPkg)
+	}
 }
 
 func (cmd cmdDELE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	if len(paramstr) == 0{
+		con.WriteObject(&noParamPkg)
+		return
+	}
 	client := con.GetUseData().(*ftpClientBinds)
-	touploadpath,_ := srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
+	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//删除文件
 	finfo, err := os.Lstat(touploadpath)
 	if err == nil{
 		if finfo.IsDir(){
-			con.WriteObject(&ftpResponsePkg{550,"Path Is not a File",false})
+			con.WriteObject(&pathNoFile)
 			return
 		}
 		if err = os.Remove(touploadpath);err != nil{
 			con.WriteObject(&ftpResponsePkg{550,fmt.Sprintf("File delete failed:",err),false})
 		}else{
-			con.WriteObject(&ftpResponsePkg{250,"File deleted",false})
+			con.WriteObject(&fileDelPkg)
 		}
 	}else{
 		con.WriteObject(&ftpResponsePkg{550,fmt.Sprintf("File delete failed:",err),false})
@@ -219,29 +347,43 @@ func (cmd cmdDELE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 
 func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//增加文件
+	if len(paramstr) == 0{
+		con.WriteObject(&noParamPkg)
+		return
+	}
 	client := con.GetUseData().(*ftpClientBinds)
-	touploadpath,_ := srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
+	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
-	con.WriteObject(&ftpResponsePkg{150,"Data transfer starting",false})
+	con.WriteObject(&dataTransferStartPkg)
 	finfo, err := os.Lstat(touploadpath)
+	var f *os.File
 	if err == nil{
 		if finfo.IsDir(){
-			con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln("error during transfer:", err),false})
+			con.WriteObject(&storeFileFpkg)
 			return
+		}
+		//打开文件
+		f, err = os.OpenFile(touploadpath, os.O_APPEND|os.O_RDWR, 0660)
+		if finfo.Size() >= client.lastPos{
+			f.Seek(int64(client.lastPos), os.SEEK_SET)
+		}else{
+			f.Truncate(int64(client.lastPos))
 		}
 	}else if !os.IsNotExist(err) {
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln("Put File error:", err),false})
 		return
+	}else{
+		f, err = os.Create(touploadpath)
+		f.Truncate(int64(client.lastPos))
 	}
-	//创建文件
-	f, err := os.OpenFile(touploadpath, os.O_APPEND|os.O_RDWR, 0660)
+
 	if err != nil {
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln("Create File error:", err),false})
 		return
 	}
 	//等待用户上传文件直到完成
-	//client.uploadFileInfo.transEvent =  make(chan struct{})
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
+	dataclient.lastFilePos = uint32(client.lastPos)
 	dataclient.f = f
 	dataclient.curPosition = 0
 	close(dataclient.waitReadChan) //通知可以读了
@@ -249,14 +391,18 @@ func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 
 func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//创建或者覆盖文件
+	if len(paramstr) == 0{
+		con.WriteObject(&noParamPkg)
+		return
+	}
 	client := con.GetUseData().(*ftpClientBinds)
-	touploadpath,_ := srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
+	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
-	con.WriteObject(&ftpResponsePkg{150,"Data transfer starting",false})
+	con.WriteObject(&dataTransferStartPkg)
 	finfo, err := os.Lstat(touploadpath)
 	if err == nil{
 		if finfo.IsDir(){
-			con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln("error during transfer:", err),false})
+			con.WriteObject(&storeFileFpkg)
 			return
 		}
 	}else if !os.IsNotExist(err) {
@@ -281,7 +427,7 @@ func (cmd cmdMDTM)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	//检查文件最后修改时间
 	client := con.GetUseData().(*ftpClientBinds)
 	path := srv.buildPath(client.curPath, paramstr)
-	path,err := srv.localPath(path)
+	path = srv.localPath(path)
 	rPath, err := filepath.Abs(path)
 	if err != nil {
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln(paramstr, "Get ModifyTime Error: ",err.Error()),false})
@@ -298,7 +444,7 @@ func (cmd cmdSIZE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	//获得文件大小
 	client := con.GetUseData().(*ftpClientBinds)
 	path := srv.buildPath(client.curPath, paramstr)
-	path,err := srv.localPath(path)
+	path = srv.localPath(path)
 	rPath, err := filepath.Abs(path)
 	if err != nil {
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln(paramstr, "Size Error"),false})
@@ -349,6 +495,7 @@ func (cmd cmdRETR)petrFile(params ...interface{})  {
 	client.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintf("Closing data connection,TotalSize %d sent %d bytes",totalsize,rsize),false})
 	client.datacon.Close() //数据连接关闭
 	client.datacon = nil
+	client.lastPos = 0
 	srv.dataServer.ReciveBuffer(buffer)
 }
 
@@ -356,9 +503,10 @@ func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	//下载文件或者目录
 	client := con.GetUseData().(*ftpClientBinds)
 	path := srv.buildPath(client.curPath, paramstr)
-	path,err := srv.localPath(path)
+	path = srv.localPath(path)
 	rPath, err := filepath.Abs(path)
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
+	dataclient.lastFilePos = uint32(client.lastPos)
 	close(dataclient.waitReadChan) //通知可以读了
 	if err != nil {
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln(paramstr, "RETR Error: ",err.Error()),false})
@@ -399,7 +547,7 @@ func (cmd cmdCDUP)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 
 func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//返回指定目录的文件名列表
-	con.WriteObject(&ftpResponsePkg{150,"Opening ASCII mode data connection for file list",false})
+	con.WriteObject(&openAsCiiModePkg)
 	var fpath string
 	client := con.GetUseData().(*ftpClientBinds)
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
@@ -419,11 +567,8 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		}
 	}
 	path := srv.buildPath(client.curPath, fpath)
-	path,err := srv.localPath(path)
-	if err != nil{
-		con.WriteObject(&ftpResponsePkg{550,err.Error(),false})
-		return
-	}
+	path = srv.localPath(path)
+	var err error
 	if path == ""{
 		//根目录，直接返回根目录结构
 		buffer := srv.GetBuffer(4096)
@@ -431,9 +576,6 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		srv.ftpDirectorys.Range(func(key, value interface{}) bool {
 			dirs := value.(*ftpDirs)
 			finfo,err = os.Stat(dirs.localPathName)
-			if err != nil{
-				return false
-			}
 			buffer.WriteString(finfo.Mode().String())
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(finfo.Size())), 12))
@@ -506,7 +648,7 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 
 
 func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
-	con.WriteObject(&ftpResponsePkg{150,"Opening ASCII mode data connection for file list",false})
+	con.WriteObject(&openAsCiiModePkg)
 	var fpath string
 	client := con.GetUseData().(*ftpClientBinds)
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
@@ -524,12 +666,8 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			}
 		}
 	}
-	path := srv.buildPath(client.curPath, fpath)
-	path,err := srv.localPath(path)
-	if err != nil{
-		con.WriteObject(&ftpResponsePkg{550,err.Error(),false})
-		return
-	}
+	var err error
+	path := srv.localPath(srv.buildPath(client.curPath, fpath))
 	if path == ""{
 		//根目录，直接返回根目录结构
 		buffer := srv.GetBuffer(4096)
@@ -583,7 +721,7 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		return
 	}
 	if !f.IsDir(){
-		con.WriteObject(&ftpResponsePkg{550,"Not a directory",false})
+		con.WriteObject(&noDirPkg)
 		return
 	}
 	//找到了真实的目录位置
@@ -618,7 +756,7 @@ func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			r := rand.New(rand.NewSource(time.Now().UnixNano()))
 			port = srv.MinPasvPort + uint16(r.Intn(int(srv.MaxPasvPort-srv.MinPasvPort)))
 			if !srv.createDataServer(port,con){
-				con.WriteObject(&ftpResponsePkg{425,"Data connection failed",false})
+				con.WriteObject(&dataConnectionFailedPkg)
 				return
 			}
 		}else{
@@ -628,7 +766,7 @@ func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 		port = srv.MinPasvPort + uint16(r.Intn(int(srv.MaxPasvPort-srv.MinPasvPort)))
 		if !srv.createDataServer(port,con){
-			con.WriteObject(&ftpResponsePkg{425,"Data connection failed",false})
+			con.WriteObject(&dataConnectionFailedPkg)
 			return
 		}
 	}
@@ -697,10 +835,10 @@ func (cmd cmdTYPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	paramstr = strings.ToUpper(paramstr)
 	if paramstr == "A"{
 		client.typeAnsi = true
-		con.WriteObject(&ftpResponsePkg{200,"Type set to ASCII",false})
+		con.WriteObject(&tpSetApkg)
 	}else if paramstr == "I"{
 		client.typeAnsi = false
-		con.WriteObject(&ftpResponsePkg{200,"Type set to binary",false})
+		con.WriteObject(&tbSetBpkg)
 	}else if paramstr == ""{
 		if client.typeAnsi{
 			con.WriteObject(&ftpResponsePkg{200,"Type is ASCII",false})
@@ -722,7 +860,7 @@ func (cmd cmdQUIT)MustLogin() bool{
 }
 
 func (cmd cmdQUIT)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
-	con.WriteObject(&ftpResponsePkg{221,"Byebye",false})
+	con.WriteObject(&byePkg)
 }
 
 func (cmd cmdFEAT)MustLogin() bool{
@@ -731,7 +869,7 @@ func (cmd cmdFEAT)MustLogin() bool{
 
 func (cmd cmdFEAT)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//获取系统支持的CMD扩展命令
-	con.WriteObject(&ftpResponsePkg{211,fmt.Sprintf("Extensions supported:\n%s", featCmds),true})
+	con.WriteObject(&featcmdPkg)
 }
 
 func (cmd cmdPASS)MustLogin() bool{
@@ -744,13 +882,13 @@ func (cmd cmdPASS)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	client.isLogin = false
 	if client.user.PassWord == paramstr{
 		client.isLogin = true
-		con.WriteObject(&ftpResponsePkg{230,"user login success!",false})
+		con.WriteObject(&logokpkg)
 	}else{
 		if client.user.IsAnonymous && client.user.PassWord == ""{
 			client.isLogin = true
-			con.WriteObject(&ftpResponsePkg{230,"user login success!",false})
+			con.WriteObject(&logokpkg)
 		}else{
-			con.WriteObject(&ftpResponsePkg{530,"Password error, user logon failed",false})
+			con.WriteObject(&logfailedpkg)
 		}
 	}
 }
@@ -762,9 +900,9 @@ func (cmd cmdSYST)MustLogin() bool{
 func (cmd cmdSYST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//服务器远程系统的操作系统类型
 	if strings.Compare(runtime.GOOS,"windows") == 0{
-		con.WriteObject(&ftpResponsePkg{215,"Windows Type: L8",false})
+		con.WriteObject(&winTypePkg)
 	}else{
-		con.WriteObject(&ftpResponsePkg{215,"UNIX Type: L8",false})
+		con.WriteObject(&unixTypePkg)
 	}
 }
 
@@ -780,10 +918,10 @@ func (cmd cmdUser)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		ftpbinds.isLogin = false
 		ftpbinds.cmdcon = con
 		ftpbinds.typeAnsi = true
-		ftpbinds.curPath = ""
+		ftpbinds.curPath = "/"
 		ftpbinds.user = &srv.anonymousUser
 		con.SetUseData(ftpbinds)
-		con.WriteObject(&ftpResponsePkg{331,"Please enter a password",false})
+		con.WriteObject(&passWordPkg)
 		return
 	}
 	if v,ok := srv.users.Load(paramstr);ok{
@@ -791,13 +929,13 @@ func (cmd cmdUser)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		ftpbinds.typeAnsi = true
 		ftpbinds.isLogin = false
 		ftpbinds.cmdcon = con
-		ftpbinds.curPath = ""
+		ftpbinds.curPath = "/"
 		ftpbinds.user = v.(*ftpUser)
 		con.SetUseData(ftpbinds)
-		con.WriteObject(&ftpResponsePkg{331,"Please enter a password",false})
+		con.WriteObject(&passWordPkg)
 		return
 	}
-	con.WriteObject(&ftpResponsePkg{530,"User does not exist and cannot log on",false})
+	con.WriteObject(&canNotLogPkg)
 }
 
 func (coder *FtpProtocol)Encode(obj interface{},w io.Writer)error  {
@@ -882,7 +1020,7 @@ func NewFtpServer()*FTPServer  {
 		cmdpkg := recvData.(*ftpcmdpkg)
 		v := DxCommonLib.FastByte2String(cmdpkg.cmd)
 		bt := cmdpkg.params
-		if v == "STOR" || v == "RETR"{
+		if v == "STOR" || v == "RETR" || v == "DELE" || v == "MKD"{ //非Utf8模式下
 			if abt,err := DxCommonLib.GBK2Utf8(bt);err==nil{
 				bt = abt
 			}
@@ -1025,6 +1163,7 @@ func (srv *ftpDataServer)CustomRead(con *ServerBase.DxNetConnection,targetdata i
 	client.f = nil
 	client.ftpClient.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintln("OK, received %d bytes",client.curPosition),false})
 	client.curPosition = 0
+	client.ftpClient.lastPos = 0
 	return true
 }
 
@@ -1115,7 +1254,7 @@ func (srv *FTPServer)buildPath(curPath,paramstr string)string  {
 	return fullPath
 }
 
-func (srv *FTPServer)localPath(ftpdir string)(string,error)  {
+func (srv *FTPServer)localPath(ftpdir string)string  {
 	paths := strings.Split(ftpdir, "/")
 	rdir := strings.ToUpper(paths[0]) //第一个目录是用户指定的目录
 	storedir := rdir
@@ -1133,14 +1272,14 @@ func (srv *FTPServer)localPath(ftpdir string)(string,error)  {
 	}
 	if rdir == ""{
 		//根目录,回到根目录
-		return "",nil
+		return ""
 	}
 	if v,ok := srv.ftpDirectorys.Load(rdir);ok{
 		dirs := v.(*ftpDirs)
-		return filepath.Join(append([]string{dirs.localPathName}, paths...)...),nil
+		return filepath.Join(append([]string{dirs.localPathName}, paths...)...)
 	}
 	//不是根目录中的目录，那么认为是主目录中的
-	return filepath.Join(append([]string{srv.maindir.localPathName,storedir}, paths...)...),nil
+	return filepath.Join(append([]string{srv.maindir.localPathName,storedir}, paths...)...)
 }
 
 func (srv *FTPServer)getFtpClient()*ftpClientBinds  {
@@ -1157,6 +1296,8 @@ func (srv *FTPServer)freeFtpClient(client *ftpClientBinds)  {
 	client.curPath = ""
 	client.user = nil
 	client.isLogin = false
+	client.reNameFrom = ""
+	client.lastPos = 0
 	client.typeAnsi = true
 	srv.clientPool.Put(client)
 }
