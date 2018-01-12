@@ -218,6 +218,14 @@ var (
 	rnfrCmdPkg = ftpResponsePkg{350,"Please Send RNTO Command To Set New Name.",false}
 	frenameOkpkg = ftpResponsePkg{250,"File renamed",false}
 	dirDeleteOkPkg = ftpResponsePkg{250,"Directory deleted OK",false}
+
+	noDelDirPermission = ftpResponsePkg{550,"Directory delete failed: No Del Dir Permission",false}
+	noCreateDirPermission = ftpResponsePkg{550,"Create Directory failed: No MkDir Permission",false}
+	noWriteFilePermission = ftpResponsePkg{550,"Upload File failed: No Write Permission",false}
+	noDelFilePermission = ftpResponsePkg{550,"Del File failed: No Write Permission",false}
+	noAppendFilePermission = ftpResponsePkg{550,"Append File failed: No Append Permission",false}
+	noReadFilePermission = ftpResponsePkg{550,"DownLoad File failed: No Read Permission",false}
+	noListPermission = ftpResponsePkg{550,"No List Permission",false}
 )
 
 
@@ -403,6 +411,10 @@ func (cmd cmdRMD)MustUtf8()bool  {
 
 func (cmd cmdRMD) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanDelDir(){
+		con.WriteObject(&noDelDirPermission)
+		return
+	}
 	rpath := srv.localPath(srv.buildPath(client.curPath,paramstr))
 	f,err := os.Lstat(rpath)
 	if err!=nil{
@@ -410,7 +422,12 @@ func (cmd cmdRMD) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	}else if !f.IsDir(){
 		con.WriteObject(&noDirPkg)
 	}else{
-		con.WriteObject(&dirDeleteOkPkg)
+		err = os.Remove(rpath)
+		if err != nil{
+			con.WriteObject(&ftpResponsePkg{550,fmt.Sprintln("Directory delete failed:", err),false})
+		}else{
+			con.WriteObject(&dirDeleteOkPkg)
+		}
 	}
 }
 
@@ -421,6 +438,10 @@ func (cmd cmdRNTO)MustUtf8()bool  {
 
 func (cmd cmdRNTO) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanWriteFile(){
+		con.WriteObject(&noWriteFilePermission)
+		return
+	}
 	toPath := srv.localPath(srv.buildPath(client.curPath,paramstr))
 	frompath := srv.localPath(client.reNameFrom)
 	if err := os.Rename(frompath,toPath);err!=nil{
@@ -439,6 +460,10 @@ func (cmd cmdRNFR) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,params
 	//重命名，RNFR <old path>,该命令表示重新命名文件，该命令的下一条命令用RNTO指定新的文件名。
 	//RNTO <new path>,该命令和RNFR命令共同完成对文件的重命名。
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanWriteFile(){
+		con.WriteObject(&noWriteFilePermission)
+		return
+	}
 	client.reNameFrom = srv.buildPath(client.curPath,paramstr)
 	con.WriteObject(&rnfrCmdPkg)
 }
@@ -473,6 +498,10 @@ func (cmd cmdMKD)MustUtf8()bool  {
 func (cmd cmdMKD)  Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//新建目录
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanCreateDir(){
+		con.WriteObject(&noCreateDirPermission)
+		return
+	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	if err := os.Mkdir(touploadpath,os.ModePerm);err!=nil{
 		con.WriteObject(&ftpResponsePkg{550,fmt.Sprintln("make Directory Failed: ", err),false})
@@ -507,6 +536,10 @@ func (cmd cmdDELE)MustUtf8()bool  {
 
 func (cmd cmdDELE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanDelFile(){
+		con.WriteObject(&noDelFilePermission)
+		return
+	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//删除文件
 	finfo, err := os.Lstat(touploadpath)
@@ -532,6 +565,14 @@ func (cmd cmdAPPE)MustUtf8()bool  {
 func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//增加文件
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanAppendFile(){
+		con.WriteObject(&noAppendFilePermission)
+		return
+	}
+	if !client.user.Permission.CanWriteFile(){
+		con.WriteObject(&noWriteFilePermission)
+		return
+	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
 	con.WriteObject(&dataTransferStartPkg)
@@ -576,6 +617,10 @@ func (cmd cmdSTOR)MustUtf8()bool  {
 func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//创建或者覆盖文件
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanWriteFile(){
+		con.WriteObject(&noCreateDirPermission)
+		return
+	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
 	con.WriteObject(&dataTransferStartPkg)
@@ -694,6 +739,10 @@ func (cmd cmdRETR)petrFile(params ...interface{})  {
 func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//下载文件或者目录
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanReadFile(){
+		con.WriteObject(&noReadFilePermission)
+		return
+	}
 	path := srv.buildPath(client.curPath, paramstr)
 	path = srv.localPath(path)
 	rPath, err := filepath.Abs(path)
@@ -744,8 +793,12 @@ func (cmd cmdNLST)MustUtf8()bool  {
 func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//返回指定目录的文件名列表
 	con.WriteObject(&openAsCiiModePkg)
-	var fpath string
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanListDir(){
+		con.WriteObject(&noListPermission)
+		return
+	}
+	var fpath string
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	close(dataclient.waitReadChan) //通知可以读了
 	fields := strings.Fields(paramstr)
@@ -868,6 +921,10 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	con.WriteObject(&openAsCiiModePkg)
 	var fpath string
 	client := con.GetUseData().(*ftpClientBinds)
+	if !client.user.Permission.CanListDir(){
+		con.WriteObject(&noListPermission)
+		return
+	}
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	close(dataclient.waitReadChan) //通知可以读了
 	if len(paramstr) == 0 {

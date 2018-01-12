@@ -6,12 +6,9 @@ import (
 	"github.com/suiyunonghen/GVCL/WinApi"
 	"unsafe"
 	"syscall"
-	"fmt"
 )
 
 func main()  {
-	a := uint8(Ftp.Permission_Dir_List)
-	fmt.Println(^a)
 	app := controls.NewApplication()
 	srv := Ftp.NewFtpServer()
 
