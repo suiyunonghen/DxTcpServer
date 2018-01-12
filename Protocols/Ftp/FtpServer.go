@@ -23,7 +23,9 @@ import (
 )
 
 type(
-	FtpProtocol  struct{}
+
+	FTPPermission		uint32
+	FtpProtocol			struct{}
 
 	ftpcmdpkg struct{
 		cmd			[]byte
@@ -37,10 +39,10 @@ type(
 		hasEndMsg				bool
 	}
 
-	ftpUser		struct{
+	FtpUser		struct{
 		UserID			string
 		PassWord		string
-		Permission 		int
+		Permission 		FTPPermission
 		IsAnonymous		bool
 	}
 
@@ -51,7 +53,7 @@ type(
 	}
 
 	ftpClientBinds		struct{
-		user			*ftpUser
+		user			*FtpUser
 		isLogin			bool
 		curPath			string			//当前的路径位置
 		typeAnsi		bool			//ANSIMode
@@ -77,12 +79,13 @@ type(
 		ftplocalPaths		sync.Map
 		maindir				ftpDirs
 		WelcomeMessage		string
-		anonymousUser		ftpUser
+		anonymousUser		FtpUser
 		PublicIP			string   		//对外开放的IP服务地址
 		dataServer			*ftpDataServer  //对外的被动二进制服务
 		MinPasvPort			uint16			//被动数据请求的开放端口范围
 		MaxPasvPort			uint16
 		clientPool			sync.Pool
+		OnGetFtpUser		func(userId string)*FtpUser  //当在用户列表中没找到的时候，触发本函数查找用户
 	}
 
 
@@ -135,6 +138,18 @@ type(
 	cmdRNTO		struct{cmdBase}
 	cmdRMD		struct{cmdBase}
 	cmdSTRU		struct{cmdBase}
+)
+
+const(
+	Permission_File_Read = 1
+	Permission_File_Write = 2
+	Permission_File_Delete = 4
+	Permission_File_Append = 8
+
+	Permission_Dir_Create = 0x10
+	Permission_Dir_Delete = 0x20
+	Permission_Dir_List = 0x40
+	Permission_Dir_SubDirs = 0x80
 )
 
 var (
@@ -214,6 +229,108 @@ func init() {
 		}
 	}
 	featcmdPkg.responseMsg = featCmds
+}
+
+func (permission FTPPermission)CanReadFile()bool  {
+	return uint32(permission) & Permission_File_Read == Permission_File_Read
+}
+
+func (permission FTPPermission)CanWriteFile()bool  {
+	return uint32(permission) & Permission_File_Write == Permission_File_Write
+}
+
+func (permission FTPPermission)CanDelFile()bool  {
+	return uint32(permission) & Permission_File_Delete == Permission_File_Delete
+}
+
+
+func (permission FTPPermission)CanAppendFile()bool  {
+	return uint32(permission) & Permission_File_Append == Permission_File_Append
+}
+
+
+func (permission FTPPermission)CanCreateDir()bool  {
+	return uint32(permission) & Permission_Dir_Create == Permission_Dir_Create
+}
+
+func (permission FTPPermission)CanDelDir()bool  {
+	return uint32(permission) & Permission_Dir_Delete == Permission_Dir_Delete
+}
+
+func (permission FTPPermission)CanListDir()bool  {
+	return uint32(permission) & Permission_Dir_List == Permission_Dir_List
+}
+
+
+func (permission FTPPermission)CanSubDirs()bool  {
+	return uint32(permission) & Permission_Dir_SubDirs == Permission_Dir_SubDirs
+}
+
+func (permission *FTPPermission)SetFileReadPermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_File_Read)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_File_Read)))
+	}
+}
+
+func (permission *FTPPermission)SetFileWritePermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_File_Write)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_File_Write)))
+	}
+}
+
+func (permission *FTPPermission)SetFileDelPermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_File_Delete)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_File_Delete)))
+	}
+}
+
+
+func (permission *FTPPermission)SetFileAppendPermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_File_Append)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_File_Append)))
+	}
+}
+
+
+func (permission *FTPPermission)SetDirCreatePermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_Dir_Create)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_Dir_Create)))
+	}
+}
+
+func (permission *FTPPermission)SetDirListPermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_Dir_List)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_Dir_List)))
+	}
+}
+
+func (permission *FTPPermission)SetDirDelPermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_Dir_Delete)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_Dir_Delete)))
+	}
+}
+
+
+func (permission *FTPPermission)SetDirSubDirsPermission(v bool)  {
+	if v {
+		*permission = FTPPermission(uint32(*permission) | Permission_Dir_SubDirs)
+	}else{
+		*permission = FTPPermission(uint32(*permission) & uint32(^uint8(Permission_Dir_SubDirs)))
+	}
 }
 
 func (cmd cmdBase)IsFeatCmd() bool{
@@ -1077,12 +1194,29 @@ func (cmd cmdUser)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		ftpbinds.isLogin = false
 		ftpbinds.cmdcon = con
 		ftpbinds.curPath = "/"
-		ftpbinds.user = v.(*ftpUser)
+		ftpbinds.user = v.(*FtpUser)
 		con.SetUseData(ftpbinds)
 		con.WriteObject(&passWordPkg)
 		return
 	}
-	con.WriteObject(&canNotLogPkg)
+	//检验账户
+	var user *FtpUser = nil
+	if srv.OnGetFtpUser != nil{
+		user = srv.OnGetFtpUser(paramstr)
+	}
+	if user == nil {
+		con.WriteObject(&canNotLogPkg)
+	}else{
+		user.UserID = paramstr
+		ftpbinds := srv.getFtpClient()
+		ftpbinds.isLogin = false
+		ftpbinds.cmdcon = con
+		ftpbinds.typeAnsi = true
+		ftpbinds.curPath = "/"
+		ftpbinds.user = user
+		con.SetUseData(ftpbinds)
+		con.WriteObject(&passWordPkg)
+	}
 }
 
 func (coder *FtpProtocol)Encode(obj interface{},w io.Writer)error  {
@@ -1149,12 +1283,18 @@ func (coder *FtpProtocol)PacketObject(objpkg interface{},buffer *bytes.Buffer)([
 	return buffer.Bytes(),nil
 }
 
+
 func NewFtpServer()*FTPServer  {
 	result := new(FTPServer)
 	result.SubInit()
 	result.SetCoder(new(FtpProtocol))
 	result.anonymousUser.UserID = "anonymous"
 	result.anonymousUser.IsAnonymous = true
+
+	result.anonymousUser.Permission.SetDirSubDirsPermission(true)
+	result.anonymousUser.Permission.SetDirListPermission(true)
+	result.anonymousUser.Permission.SetFileReadPermission(true)
+
 	result.WelcomeMessage = "Welcom to DxGoFTP"
 	result.MinPasvPort = 50000
 	result.MaxPasvPort = 60000
@@ -1343,6 +1483,9 @@ func (srv *FTPServer)checkDataServerIdle(params ...interface{})  {
 	}
 }
 
+func (srv *FTPServer)CopyAnonymousUserPermissions(user *FtpUser)  {
+	user.Permission = srv.anonymousUser.Permission
+}
 
 func (srv *FTPServer)createDataServer(port uint16,con *ServerBase.DxNetConnection)bool  {
 	if srv.dataServer == nil{
@@ -1369,6 +1512,20 @@ func (srv *FTPServer)createDataServer(port uint16,con *ServerBase.DxNetConnectio
 func (srv *FTPServer) SubInit() {
 	srv.DxTcpServer.SubInit()
 	srv.GDxBaseObject.SubInit(srv)
+}
+
+func (srv *FTPServer)SetAnonymouseDirPermission(canCreateDir,canDelDir,canListDir,canSubDirs bool)  {
+	srv.anonymousUser.Permission.SetDirCreatePermission(canCreateDir)
+	srv.anonymousUser.Permission.SetDirListPermission(canListDir)
+	srv.anonymousUser.Permission.SetDirDelPermission(canDelDir)
+	srv.anonymousUser.Permission.SetDirSubDirsPermission(canSubDirs)
+}
+
+func (srv *FTPServer)SetAnonymouseFilePermission(canRead,canWrite,canAppend,canDelete bool)  {
+	srv.anonymousUser.Permission.SetFileReadPermission(canRead)
+	srv.anonymousUser.Permission.SetFileAppendPermission(canAppend)
+	srv.anonymousUser.Permission.SetFileDelPermission(canDelete)
+	srv.anonymousUser.Permission.SetFileWritePermission(canWrite)
 }
 
 func (srv *FTPServer)MapDir(remotedir,localPath string,isMainRoot bool)  {

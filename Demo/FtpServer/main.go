@@ -6,11 +6,26 @@ import (
 	"github.com/suiyunonghen/GVCL/WinApi"
 	"unsafe"
 	"syscall"
+	"fmt"
 )
 
 func main()  {
+	a := uint8(Ftp.Permission_Dir_List)
+	fmt.Println(^a)
 	app := controls.NewApplication()
 	srv := Ftp.NewFtpServer()
+
+	srv.OnGetFtpUser = func(userId string) *Ftp.FtpUser {
+		if userId == "DxSoft"{
+			result := new(Ftp.FtpUser)
+			result.UserID = userId
+			srv.CopyAnonymousUserPermissions(result)
+			//赋值权限
+			return result
+		}
+		return nil
+	}
+
 	app.ShowMainForm = false
 	mainForm := app.CreateForm()
 	PopMenu := NVisbleControls.NewPopupMenu(mainForm)
