@@ -103,6 +103,7 @@ type(
 		IsFeatCmd()bool
 		MustLogin()bool
 		MustUtf8()bool
+		HasParams()bool
 	}
 
 	cmdBase		struct{}
@@ -132,6 +133,8 @@ type(
 	cmdREST		struct{cmdBase}
 	cmdRNFR		struct{cmdBase}
 	cmdRNTO		struct{cmdBase}
+	cmdRMD		struct{cmdBase}
+	cmdSTRU		struct{cmdBase}
 )
 
 var (
@@ -149,7 +152,6 @@ var (
 		"PASV":			cmdPASV{},
 		"LIST":			cmdLIST{},
 		"CDUP":			cmdCDUP{},
-		"XCUP":			cmdCDUP{},
 		"RETR":			cmdRETR{},
 		"SIZE":			cmdSIZE{},
 		"MDTM":			cmdMDTM{},
@@ -163,6 +165,12 @@ var (
 		"REST":			cmdREST{},
 		"RNFR":			cmdRNFR{},
 		"RNTO":			cmdRNTO{},
+		"RMD":			cmdRMD{},
+		"STRU":			cmdSTRU{},
+		"XCUP":			cmdCDUP{},
+		"XRMD":			cmdRMD{},
+		"XCWD":			cmdCWD{},
+		"XPWD":			cmdPWD{},
 		}
 	dirNoExistError = errors.New("Directors not Exists")
 	noDirError = errors.New("Not a directory")
@@ -194,6 +202,7 @@ var (
 	invalidateFilePosPkg = ftpResponsePkg{550,"invalidate File Position",false}
 	rnfrCmdPkg = ftpResponsePkg{350,"Please Send RNTO Command To Set New Name.",false}
 	frenameOkpkg = ftpResponsePkg{250,"File renamed",false}
+	dirDeleteOkPkg = ftpResponsePkg{250,"Directory deleted OK",false}
 )
 
 
@@ -219,6 +228,22 @@ func (cmd cmdBase)MustUtf8()bool  {
 	return false
 }
 
+func (cmd cmdBase)HasParams()bool  {
+	return true
+}
+
+func (cmd cmdSTRU)HasParams()bool  {
+	return false
+}
+
+func (cmd cmdSTRU)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	if strings.ToUpper(paramstr) == "F" {
+		con.WriteObject(&okpkg)
+	}else{
+		con.WriteObject(&ftpResponsePkg{504, "STRU is an obsolete command",false})
+	}
+}
+
 func lpad(input string, length int) (result string) {
 	if len(input) < length {
 		result = strings.Repeat(" ", length-len(input)) + input
@@ -234,6 +259,10 @@ func (cmd cmdALLO)MustLogin() bool{
 	return false
 }
 
+func (cmd cmdALLO)HasParams()bool  {
+	return false
+}
+
 func (cmd cmdALLO)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	con.WriteObject(&obsoletePkg)
 }
@@ -242,9 +271,30 @@ func (cmd cmdNOOP)MustLogin() bool{
 	return false
 }
 
+func (cmd cmdNOOP)HasParams()bool  {
+	return false
+}
+
 func (cmd cmdNOOP) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//保证心跳的
 	con.WriteObject(&okpkg)
+}
+
+func (cmd cmdRMD)MustUtf8()bool  {
+	return true
+}
+
+func (cmd cmdRMD) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
+	client := con.GetUseData().(*ftpClientBinds)
+	rpath := srv.localPath(srv.buildPath(client.curPath,paramstr))
+	f,err := os.Lstat(rpath)
+	if err!=nil{
+		con.WriteObject(&ftpResponsePkg{550,fmt.Sprintln("Directory delete failed:", err),false})
+	}else if !f.IsDir(){
+		con.WriteObject(&noDirPkg)
+	}else{
+		con.WriteObject(&dirDeleteOkPkg)
+	}
 }
 
 func (cmd cmdRNTO)MustUtf8()bool  {
@@ -253,10 +303,6 @@ func (cmd cmdRNTO)MustUtf8()bool  {
 
 
 func (cmd cmdRNTO) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
-	if len(paramstr) == 0{
-		con.WriteObject(&noParamPkg)
-		return
-	}
 	client := con.GetUseData().(*ftpClientBinds)
 	toPath := srv.localPath(srv.buildPath(client.curPath,paramstr))
 	frompath := srv.localPath(client.reNameFrom)
@@ -275,13 +321,13 @@ func (cmd cmdRNFR)MustUtf8()bool  {
 func (cmd cmdRNFR) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//重命名，RNFR <old path>,该命令表示重新命名文件，该命令的下一条命令用RNTO指定新的文件名。
 	//RNTO <new path>,该命令和RNFR命令共同完成对文件的重命名。
-	if len(paramstr) == 0{
-		con.WriteObject(&noParamPkg)
-		return
-	}
 	client := con.GetUseData().(*ftpClientBinds)
 	client.reNameFrom = srv.buildPath(client.curPath,paramstr)
 	con.WriteObject(&rnfrCmdPkg)
+}
+
+func (cmd cmdMODE)HasParams()bool  {
+	return false
 }
 
 func (cmd cmdMODE) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
@@ -309,10 +355,6 @@ func (cmd cmdMKD)MustUtf8()bool  {
 
 func (cmd cmdMKD)  Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//新建目录
-	if len(paramstr) == 0{
-		con.WriteObject(&noParamPkg)
-		return
-	}
 	client := con.GetUseData().(*ftpClientBinds)
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	if err := os.Mkdir(touploadpath,os.ModePerm);err!=nil{
@@ -347,10 +389,6 @@ func (cmd cmdDELE)MustUtf8()bool  {
 }
 
 func (cmd cmdDELE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
-	if len(paramstr) == 0{
-		con.WriteObject(&noParamPkg)
-		return
-	}
 	client := con.GetUseData().(*ftpClientBinds)
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//删除文件
@@ -376,10 +414,6 @@ func (cmd cmdAPPE)MustUtf8()bool  {
 
 func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//增加文件
-	if len(paramstr) == 0{
-		con.WriteObject(&noParamPkg)
-		return
-	}
 	client := con.GetUseData().(*ftpClientBinds)
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
@@ -424,10 +458,6 @@ func (cmd cmdSTOR)MustUtf8()bool  {
 
 func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//创建或者覆盖文件
-	if len(paramstr) == 0{
-		con.WriteObject(&noParamPkg)
-		return
-	}
 	client := con.GetUseData().(*ftpClientBinds)
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
@@ -593,6 +623,7 @@ func (cmd cmdNLST)MustUtf8()bool  {
 	return true
 }
 
+
 func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//返回指定目录的文件名列表
 	con.WriteObject(&openAsCiiModePkg)
@@ -600,18 +631,13 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	client := con.GetUseData().(*ftpClientBinds)
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	close(dataclient.waitReadChan) //通知可以读了
-	if len(paramstr) == 0 {
-		con.WriteObject(&ftpResponsePkg{550,"please Special DirectoryPath",false})
-		return
-	} else {
-		fields := strings.Fields(paramstr)
-		for _, field := range fields {
-			if strings.HasPrefix(field, "-") {
-				//TODO: currently ignore all the flag
-				//fpath = conn.namePrefix
-			} else {
-				fpath = field
-			}
+	fields := strings.Fields(paramstr)
+	for _, field := range fields {
+		if strings.HasPrefix(field, "-") {
+			//TODO: currently ignore all the flag
+			//fpath = conn.namePrefix
+		} else {
+			fpath = field
 		}
 	}
 	path := srv.buildPath(client.curPath, fpath)
@@ -715,6 +741,10 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 
 func (cmd cmdLIST)MustUtf8()bool  {
 	return true
+}
+
+func (cmd cmdLIST)HasParams()bool  {
+	return false
 }
 
 func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -836,6 +866,11 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	srv.ReciveBuffer(buffer)
 }
 
+func (cmd cmdPASV)HasParams()bool  {
+	return false
+}
+
+
 func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//被动传输模式
 	port := uint16(0)
@@ -920,6 +955,11 @@ func (cmd cmdCWD)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr
 	}
 }
 
+func (cmd cmdTYPE)HasParams()bool  {
+	return false
+}
+
+
 func (cmd cmdTYPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//查看或者设置当前的传输方式
 	client := con.GetUseData().(*ftpClientBinds)
@@ -941,9 +981,17 @@ func (cmd cmdTYPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	}
 }
 
+func (cmd cmdPWD)HasParams()bool  {
+	return false
+}
+
 func (cmd cmdPWD)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	client := con.GetUseData().(*ftpClientBinds)
 	con.WriteObject(&ftpResponsePkg{257,"\""+client.curPath+"\" is the current directory",false})
+}
+
+func (cmd cmdQUIT)HasParams()bool  {
+	return false
 }
 
 func (cmd cmdQUIT)MustLogin() bool{
@@ -955,6 +1003,10 @@ func (cmd cmdQUIT)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 }
 
 func (cmd cmdFEAT)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdFEAT)HasParams()bool  {
 	return false
 }
 
@@ -985,6 +1037,10 @@ func (cmd cmdPASS)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 }
 
 func (cmd cmdSYST)MustLogin() bool{
+	return false
+}
+
+func (cmd cmdSYST)HasParams()bool  {
 	return false
 }
 
@@ -1123,6 +1179,10 @@ func NewFtpServer()*FTPServer  {
 				}
 			}
 			bt := cmdpkg.params
+			if cmd.HasParams() && (bt == nil || len(bt) == 0){
+				con.WriteObject(&noParamPkg)
+				return
+			}
 			if cmd.MustUtf8(){
 				if client == nil{
 					client = con.GetUseData().(*ftpClientBinds)
