@@ -59,6 +59,7 @@ type(
 		cmdcon			*ServerBase.DxNetConnection //命令的链接
 		lastPos			int64
 		reNameFrom		string				//要重命名的文件或者目录
+		clientUtf8		bool
 	}
 
 	dataClientBinds		struct{
@@ -101,6 +102,7 @@ type(
 		Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)
 		IsFeatCmd()bool
 		MustLogin()bool
+		MustUtf8()bool
 	}
 
 	cmdBase		struct{}
@@ -187,8 +189,8 @@ var (
 	dirCreateedPkg = ftpResponsePkg{257,"Directory created OK",false}
 	modeobsoletePkg= ftpResponsePkg{504,"MODE is an obsolete command",false}
 	utf8OnOffPkg = ftpResponsePkg{550,"Params Must 'UTF8 ON(OFF)'",false}
-	Utf8OnPkg = ftpResponsePkg{200,"UTF8 mode enabled",false}
-	Utf8ffPkg = ftpResponsePkg{550,"UTF8 mode disabled",false}
+	utf8OnPkg = ftpResponsePkg{200,"UTF8 mode enabled",false}
+	utf8ffPkg = ftpResponsePkg{550,"UTF8 mode disabled",false}
 	invalidateFilePosPkg = ftpResponsePkg{550,"invalidate File Position",false}
 	rnfrCmdPkg = ftpResponsePkg{350,"Please Send RNTO Command To Set New Name.",false}
 	frenameOkpkg = ftpResponsePkg{250,"File renamed",false}
@@ -211,6 +213,10 @@ func (cmd cmdBase)IsFeatCmd() bool{
 
 func (cmd cmdBase)MustLogin() bool{
 	return true
+}
+
+func (cmd cmdBase)MustUtf8()bool  {
+	return false
 }
 
 func lpad(input string, length int) (result string) {
@@ -241,6 +247,11 @@ func (cmd cmdNOOP) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,params
 	con.WriteObject(&okpkg)
 }
 
+func (cmd cmdRNTO)MustUtf8()bool  {
+	return true
+}
+
+
 func (cmd cmdRNTO) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string) {
 	if len(paramstr) == 0{
 		con.WriteObject(&noParamPkg)
@@ -255,6 +266,10 @@ func (cmd cmdRNTO) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,params
 		con.WriteObject(&frenameOkpkg)
 	}
 	client.reNameFrom = ""
+}
+
+func (cmd cmdRNFR)MustUtf8()bool  {
+	return true
 }
 
 func (cmd cmdRNFR) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -288,6 +303,10 @@ func (cmd cmdREST) Execute(srv *FTPServer,con *ServerBase.DxNetConnection,params
 	con.WriteObject(&ftpResponsePkg{350,fmt.Sprintln("Start transfer from: ", lastFilePos),false})
 }
 
+func (cmd cmdMKD)MustUtf8()bool  {
+	return true
+}
+
 func (cmd cmdMKD)  Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//新建目录
 	if len(paramstr) == 0{
@@ -315,10 +334,16 @@ func (cmd cmdOPTS)  Execute(srv *FTPServer,con *ServerBase.DxNetConnection,param
 		return
 	}
 	if strings.ToUpper(parts[1]) == "ON" {
-		con.WriteObject(&Utf8OnPkg)
+		con.GetUseData().(*ftpClientBinds).clientUtf8 = true
+		con.WriteObject(&utf8OnPkg)
 	} else {
-		con.WriteObject(&Utf8ffPkg)
+		con.GetUseData().(*ftpClientBinds).clientUtf8 = false
+		con.WriteObject(&utf8ffPkg)
 	}
+}
+
+func (cmd cmdDELE)MustUtf8()bool  {
+	return true
 }
 
 func (cmd cmdDELE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -343,6 +368,10 @@ func (cmd cmdDELE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	}else{
 		con.WriteObject(&ftpResponsePkg{550,fmt.Sprintf("File delete failed:",err),false})
 	}
+}
+
+func (cmd cmdAPPE)MustUtf8()bool  {
+	return true
 }
 
 func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -389,6 +418,10 @@ func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	close(dataclient.waitReadChan) //通知可以读了
 }
 
+func (cmd cmdSTOR)MustUtf8()bool  {
+	return true
+}
+
 func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//创建或者覆盖文件
 	if len(paramstr) == 0{
@@ -423,6 +456,10 @@ func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	close(dataclient.waitReadChan) //通知可以读了
 }
 
+func (cmd cmdMDTM)MustUtf8()bool  {
+	return true
+}
+
 func (cmd cmdMDTM)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//检查文件最后修改时间
 	client := con.GetUseData().(*ftpClientBinds)
@@ -438,6 +475,10 @@ func (cmd cmdMDTM)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	}else{
 		con.WriteObject(&ftpResponsePkg{213,f.ModTime().Format("20060102150405"),false})
 	}
+}
+
+func (cmd cmdSIZE)MustUtf8()bool  {
+	return true
 }
 
 func (cmd cmdSIZE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -456,6 +497,10 @@ func (cmd cmdSIZE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		con.WriteObject(&ftpResponsePkg{213,strconv.Itoa(int(f.Size())),false})
 	}
 
+}
+
+func (cmd cmdRETR)MustUtf8()bool  {
+	return true
 }
 
 func (cmd cmdRETR)petrFile(params ...interface{})  {
@@ -544,6 +589,9 @@ func (cmd cmdCDUP)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	con.WriteObject(&ftpResponsePkg{250,"Directory changed to "+client.curPath,false})
 }
 
+func (cmd cmdNLST)MustUtf8()bool  {
+	return true
+}
 
 func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//返回指定目录的文件名列表
@@ -580,7 +628,13 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(finfo.Size())), 12))
 			buffer.WriteString(finfo.ModTime().Format(" Jan _2 15:04 "))
-			fmt.Fprintf(buffer, "%s\r\n", finfo.Name())
+			if client.clientUtf8{
+				buffer.WriteString(finfo.Name())
+			}else{
+				gbkbyte,_:= DxCommonLib.GBKString(finfo.Name())
+				buffer.Write(gbkbyte)
+			}
+			buffer.WriteString("\r\n")
 			return true
 		})
 		//主目录
@@ -595,7 +649,13 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 				buffer.WriteString(" 1 System System ")
 				buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 				buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
-				fmt.Fprintf(buffer, "%s\r\n", info.Name())
+				if client.clientUtf8{
+					buffer.WriteString(finfo.Name())
+				}else{
+					gbkbyte,_:= DxCommonLib.GBKString(finfo.Name())
+					buffer.Write(gbkbyte)
+				}
+				buffer.WriteString("\r\n")
 			}
 			return nil
 		})
@@ -634,7 +694,13 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 			buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
-			fmt.Fprintf(buffer, "%s\r\n", info.Name())
+			if client.clientUtf8{
+				buffer.WriteString(info.Name())
+			}else{
+				gbkbyte,_:= DxCommonLib.GBKString(info.Name())
+				buffer.Write(gbkbyte)
+			}
+			buffer.WriteString("\r\n")
 		}
 		return nil
 	})
@@ -646,6 +712,10 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	srv.ReciveBuffer(buffer)
 }
 
+
+func (cmd cmdLIST)MustUtf8()bool  {
+	return true
+}
 
 func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	con.WriteObject(&openAsCiiModePkg)
@@ -682,7 +752,13 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(finfo.Size())), 12))
 			buffer.WriteString(finfo.ModTime().Format(" Jan _2 15:04 "))
-			fmt.Fprintf(buffer, "%s\r\n", finfo.Name())
+			if client.clientUtf8{
+				buffer.WriteString(finfo.Name())
+			}else{
+				gbkbyte,_:= DxCommonLib.GBKString(finfo.Name())
+				buffer.Write(gbkbyte)
+			}
+			buffer.WriteString("\r\n")
 			return true
 		})
 		//主目录
@@ -697,7 +773,13 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 				buffer.WriteString(" 1 System System ")
 				buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 				buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
-				fmt.Fprintf(buffer, "%s\r\n", info.Name())
+				if client.clientUtf8{
+					buffer.WriteString(finfo.Name())
+				}else{
+					gbkbyte,_:= DxCommonLib.GBKString(finfo.Name())
+					buffer.Write(gbkbyte)
+				}
+				buffer.WriteString("\r\n")
 			}
 			return nil
 		})
@@ -736,7 +818,13 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 			buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
-			fmt.Fprintf(buffer, "%s\r\n", info.Name())
+			if client.clientUtf8{
+				buffer.WriteString(info.Name())
+			}else{
+				gbkbyte,_:= DxCommonLib.GBKString(info.Name())
+				buffer.Write(gbkbyte)
+			}
+			buffer.WriteString("\r\n")
 		}
 		return nil
 	})
@@ -798,6 +886,9 @@ func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	close(srv.dataServer.waitBindChan)
 }
 
+func (cmd cmdCWD)MustUtf8()bool  {
+	return true
+}
 
 func (cmd cmdCWD)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
    //变更目录
@@ -1019,25 +1110,31 @@ func NewFtpServer()*FTPServer  {
 	result.OnRecvData = func(con *ServerBase.DxNetConnection,recvData interface{}) {
 		cmdpkg := recvData.(*ftpcmdpkg)
 		v := DxCommonLib.FastByte2String(cmdpkg.cmd)
-		bt := cmdpkg.params
-		if v == "STOR" || v == "RETR" || v == "DELE" || v == "MKD"{ //非Utf8模式下
-			if abt,err := DxCommonLib.GBK2Utf8(bt);err==nil{
-				bt = abt
-			}
-		}
-		paramstr := DxCommonLib.FastByte2String(bt)
 		fmt.Println(v)
-		fmt.Println(paramstr)
 		if cmd,ok := ftpCmds[v];!ok{
 			con.WriteObject(&ftpResponsePkg{500,"Commands not supported temporarily",false})
 		}else {
+			var client *ftpClientBinds=nil
 			if cmd.MustLogin(){
-				client := con.GetUseData().(*ftpClientBinds)
+				client = con.GetUseData().(*ftpClientBinds)
 				if !client.isLogin{
 					con.WriteObject(&ftpResponsePkg{530,"you must login first",false})
 					return
 				}
 			}
+			bt := cmdpkg.params
+			if cmd.MustUtf8(){
+				if client == nil{
+					client = con.GetUseData().(*ftpClientBinds)
+				}
+				if !client.clientUtf8 { //客户端不是用的utf8，需要转换
+					if abt,err := DxCommonLib.GBK2Utf8(bt);err==nil{
+						bt = abt
+					}
+				}
+			}
+			paramstr := DxCommonLib.FastByte2String(bt)
+			fmt.Println(paramstr)
 			cmd.Execute(result,con,paramstr)
 		}
 	}
