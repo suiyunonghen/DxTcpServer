@@ -189,7 +189,9 @@ var (
 		}
 	dirNoExistError = errors.New("Directors not Exists")
 	noDirError = errors.New("Not a directory")
-	noParamPkg = ftpResponsePkg{553,"action aborted, required param missing",false}
+	unlogPkg = ftpResponsePkg{530,"you must login first",false}
+	unknowCmdPkg = ftpResponsePkg{500,"Commands not supported temporarily",false}
+	noParamPkg = ftpResponsePkg{501,"action aborted, required param missing",false}
 	obsoletePkg = ftpResponsePkg{202,"Obsolete",false}
 	okpkg = ftpResponsePkg{200,"OK",false}
 	dataTransferStartPkg =ftpResponsePkg{150,"Data transfer starting",false}
@@ -219,13 +221,13 @@ var (
 	frenameOkpkg = ftpResponsePkg{250,"File renamed",false}
 	dirDeleteOkPkg = ftpResponsePkg{250,"Directory deleted OK",false}
 
-	noDelDirPermission = ftpResponsePkg{550,"Directory delete failed: No Del Dir Permission",false}
-	noCreateDirPermission = ftpResponsePkg{550,"Create Directory failed: No MkDir Permission",false}
-	noWriteFilePermission = ftpResponsePkg{550,"Upload File failed: No Write Permission",false}
-	noDelFilePermission = ftpResponsePkg{550,"Del File failed: No Write Permission",false}
-	noAppendFilePermission = ftpResponsePkg{550,"Append File failed: No Append Permission",false}
-	noReadFilePermission = ftpResponsePkg{550,"DownLoad File failed: No Read Permission",false}
-	noListPermission = ftpResponsePkg{550,"No List Permission",false}
+	noDelDirPermission = ftpResponsePkg{551,"Directory delete failed: No Del Dir Permission",false}
+	noCreateDirPermission = ftpResponsePkg{551,"Create Directory failed: No MkDir Permission",false}
+	noWriteFilePermission = ftpResponsePkg{551,"Upload File failed: No Write Permission",false}
+	noDelFilePermission = ftpResponsePkg{551,"Del File failed: No Write Permission",false}
+	noAppendFilePermission = ftpResponsePkg{551,"Append File failed: No Append Permission",false}
+	noReadFilePermission = ftpResponsePkg{551,"DownLoad File failed: No Read Permission",false}
+	noListPermission = ftpResponsePkg{551,"No List Permission",false}
 )
 
 
@@ -1365,13 +1367,13 @@ func NewFtpServer()*FTPServer  {
 		v := DxCommonLib.FastByte2String(cmdpkg.cmd)
 		fmt.Println(v)
 		if cmd,ok := ftpCmds[v];!ok{
-			con.WriteObject(&ftpResponsePkg{500,"Commands not supported temporarily",false})
+			con.WriteObject(&unknowCmdPkg)
 		}else {
 			var client *ftpClientBinds=nil
 			if cmd.MustLogin(){
 				client = con.GetUseData().(*ftpClientBinds)
 				if !client.isLogin{
-					con.WriteObject(&ftpResponsePkg{530,"you must login first",false})
+					con.WriteObject(&unlogPkg)
 					return
 				}
 			}
