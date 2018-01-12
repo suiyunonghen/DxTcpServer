@@ -619,8 +619,12 @@ func (cmd cmdSTOR)MustUtf8()bool  {
 func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//创建或者覆盖文件
 	client := con.GetUseData().(*ftpClientBinds)
+	dataclient := client.datacon.GetUseData().(*dataClientBinds)
+	if dataclient.waitReadChan != nil{
+		defer close(dataclient.waitReadChan) //通知可以读了
+	}
 	if !client.user.Permission.CanWriteFile(){
-		con.WriteObject(&noCreateDirPermission)
+		con.WriteObject(&noWriteFilePermission)
 		return
 	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
@@ -644,10 +648,8 @@ func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	}
 	//等待用户上传文件直到完成
 	//client.uploadFileInfo.transEvent =  make(chan struct{})
-	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	dataclient.f = f
 	dataclient.curPosition = 0
-	close(dataclient.waitReadChan) //通知可以读了
 }
 
 func (cmd cmdMDTM)MustUtf8()bool  {
@@ -741,14 +743,15 @@ func (cmd cmdRETR)petrFile(params ...interface{})  {
 func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//下载文件或者目录
 	client := con.GetUseData().(*ftpClientBinds)
+	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	if !client.user.Permission.CanReadFile(){
+		close(dataclient.waitReadChan) //通知可以读了
 		con.WriteObject(&noReadFilePermission)
 		return
 	}
 	path := srv.buildPath(client.curPath, paramstr)
 	path = srv.localPath(path)
 	rPath, err := filepath.Abs(path)
-	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	dataclient.lastFilePos = uint32(client.lastPos)
 	close(dataclient.waitReadChan) //通知可以读了
 	if err != nil {
@@ -796,12 +799,13 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	//返回指定目录的文件名列表
 	con.WriteObject(&openAsCiiModePkg)
 	client := con.GetUseData().(*ftpClientBinds)
+	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	if !client.user.Permission.CanListDir(){
+		close(dataclient.waitReadChan) //通知可以读了
 		con.WriteObject(&noListPermission)
 		return
 	}
 	var fpath string
-	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	close(dataclient.waitReadChan) //通知可以读了
 	fields := strings.Fields(paramstr)
 	for _, field := range fields {
@@ -848,9 +852,9 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 				buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 				buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
 				if client.clientUtf8{
-					buffer.WriteString(finfo.Name())
+					buffer.WriteString(info.Name())
 				}else{
-					gbkbyte,_:= DxCommonLib.GBKString(finfo.Name())
+					gbkbyte,_:= DxCommonLib.GBKString(info.Name())
 					buffer.Write(gbkbyte)
 				}
 				buffer.WriteString("\r\n")
@@ -923,11 +927,12 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	con.WriteObject(&openAsCiiModePkg)
 	var fpath string
 	client := con.GetUseData().(*ftpClientBinds)
+	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	if !client.user.Permission.CanListDir(){
+		close(dataclient.waitReadChan) //通知可以读了
 		con.WriteObject(&noListPermission)
 		return
 	}
-	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	close(dataclient.waitReadChan) //通知可以读了
 	if len(paramstr) == 0 {
 		fpath = paramstr
@@ -980,9 +985,9 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 				buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 				buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
 				if client.clientUtf8{
-					buffer.WriteString(finfo.Name())
+					buffer.WriteString(info.Name())
 				}else{
-					gbkbyte,_:= DxCommonLib.GBKString(finfo.Name())
+					gbkbyte,_:= DxCommonLib.GBKString(info.Name())
 					buffer.Write(gbkbyte)
 				}
 				buffer.WriteString("\r\n")
@@ -1490,9 +1495,12 @@ func (srv *ftpDataServer)dataClientDisconnect(con *ServerBase.DxNetConnection)  
 func (srv *ftpDataServer)CustomRead(con *ServerBase.DxNetConnection,targetdata interface{})bool{
 	//这里需要等待con绑定到用户
 	client := con.GetUseData().(*dataClientBinds)
-	select{
-	case <-client.waitReadChan:
+	if client.waitReadChan != nil{
+		select{
+		case <-client.waitReadChan:
+		}
 	}
+	client.waitReadChan = nil
 	if client.f == nil{
 		return  true
 	}

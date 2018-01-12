@@ -42,8 +42,8 @@ func main()  {
 	trayicon.PopupMenu = PopMenu
 	trayicon.SetVisible(true)
 	//在GUI运行之前，开启文件服务功能
-	srv.MapDir("FtpDir1","H:\\FtpDir\\Dir1",true)
-	srv.MapDir("FtpDir2","H:\\FtpDir2",false)
+	srv.MapDir("FtpDir1","F:\\FTp1",true)
+	//srv.MapDir("FtpDir2","H:\\FtpDir2",false)
 	srv.Open("127.0.0.1:8340")
 	app.Run()
 }
