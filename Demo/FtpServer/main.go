@@ -16,6 +16,7 @@ func main()  {
 		if userId == "DxSoft"{
 			result := new(Ftp.FtpUser)
 			result.UserID = userId
+			result.PassWord = "DxSoft"
 			srv.CopyAnonymousUserPermissions(result)
 			//赋值权限
 			return result

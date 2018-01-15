@@ -1085,6 +1085,8 @@ func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	if srv.dataServer.waitBindChan != nil{
 		select{
 		case <-srv.dataServer.waitBindChan:
+		case <-DxCommonLib.After(time.Second*20):
+			//等待20秒绑定
 		}
 	}
 	srv.dataServer.waitBindChan = make(chan struct{})
@@ -1094,10 +1096,9 @@ func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	//然后执行等待链接并且绑定
 	select{
 	case  <-srv.dataServer.notifyBindOk:
-
-	case <-DxCommonLib.After(time.Second*60):
-		var m *ServerBase.DxNetConnection=nil
-		srv.dataServer.curCon.Store(m)
+		srv.dataServer.notifyBindOk = nil
+	case <-DxCommonLib.After(time.Second*30):
+		srv.dataServer.curCon.Store(0)
 	}
 	close(srv.dataServer.waitBindChan)
 }
@@ -1435,8 +1436,8 @@ func (srv *ftpDataServer) SubInit() {
 func (srv *ftpDataServer)ClientConnect(con *ServerBase.DxNetConnection) interface{}{
 	v := srv.curCon.Load()
 	if v!=nil{
-		m := v.(*ServerBase.DxNetConnection)
-		if m != nil{
+		m,ok := v.(*ServerBase.DxNetConnection)
+		if ok && m != nil{
 			st1 := strings.SplitN(m.RemoteAddr(),":",2)
 			st2 := strings.SplitN(con.RemoteAddr(),":",2)
 			if st1[0] == st2[0]{
