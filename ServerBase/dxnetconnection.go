@@ -30,6 +30,7 @@ type IConHost interface {
 	AddSendDataLen(datalen uint32)
 	Done()<-chan struct{}
 	CustomRead(con *DxNetConnection,targetdata interface{})bool //自定义读
+	AfterDisConnected(con *DxNetConnection)
 }
 
 //编码器
@@ -171,6 +172,9 @@ func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 //执行自定义数据包格式的处理规则
 func (con *DxNetConnection)conCustomRead()  {
 	coder := con.conHost.GetCoder()
+	if coder == nil{
+		return
+	}
 	var bufsize uint16
 	if coder != nil{
 		bufsize = coder.MaxBufferLen() / 2
@@ -295,6 +299,9 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 }
 
 func (con *DxNetConnection)Done()<-chan struct{}  {
+	if con.selfcancelchan == nil{
+		con.selfcancelchan = make(chan struct{})
+	}
 	return con.selfcancelchan
 }
 
@@ -303,8 +310,11 @@ func (con *DxNetConnection)Close()  {
 		return
 	}
 	con.con.Close()
-	close(con.selfcancelchan)
-	con.conHost.HandleDisConnectEvent(con)
+	if con.selfcancelchan != nil{
+		close(con.selfcancelchan)
+	}
+	host := con.conHost
+	host.HandleDisConnectEvent(con)
 	con.SetUseData(nil)
 	con.waitg.Wait()
 	con.selfcancelchan = nil
@@ -322,17 +332,21 @@ func (con *DxNetConnection)Close()  {
 		con.remoteAddr = ""
 		con.con = nil
 		con.ConHandle = 0
-		con.conHost = nil
 		con.ReciveDataLen.Init()
 		con.SendDataLen.Init()
+		con.conHost = nil
 		netpool.Put(con)
 	}
+	host.AfterDisConnected(con)
 }
 
 func (con *DxNetConnection)conRead()  {
 	con.waitg.Add(1)
 	defer con.waitg.Done()
 	encoder := con.conHost.GetCoder()
+	if encoder == nil{
+		return
+	}
 	var timeout int32
 	if con.conHost.EnableHeartCheck(){
 		timeout = con.conHost.HeartTimeOutSeconds()

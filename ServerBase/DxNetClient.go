@@ -12,21 +12,26 @@ import (
 )
 
 type DxTcpClient struct {
+	DxCommonLib.GDxBaseObject
 	Clientcon  	DxNetConnection
 	encoder		IConCoder
 	OnRecvData	GOnRecvDataEvent
 	OnSendHeart	GConnectEvent
 	OnClientconnect	 func(con *DxNetConnection)interface{}
 	OnClientDisConnected	GConnectEvent
+	AfterClientDisConnected GConnectEvent
 	OnSendData	GOnSendDataEvent
 	TimeOutSeconds	int32
 	ClientLogger *log.Logger
 	sendBuffer	*bytes.Buffer
-	donechan		chan struct{}
 }
 
 func (client *DxTcpClient)Active() bool {
 	return !client.Clientcon.UnActive()
+}
+
+func (client *DxTcpClient) SubInit() {
+	client.GDxBaseObject.SubInit(client)
 }
 
 func (client *DxTcpClient)CustomRead(con *DxNetConnection,targetData interface{})bool  {
@@ -34,7 +39,7 @@ func (client *DxTcpClient)CustomRead(con *DxNetConnection,targetData interface{}
 }
 
 func (client *DxTcpClient)Done()<-chan struct{}  {
-	return  client.donechan
+	return  client.Clientcon.Done()
 }
 
 func (client *DxTcpClient)Connect(addr string)error {
@@ -43,12 +48,22 @@ func (client *DxTcpClient)Connect(addr string)error {
 	}
 	if tcpAddr, err := net.ResolveTCPAddr("tcp4", addr);err == nil{
 		if conn, err := net.DialTCP("tcp", nil, tcpAddr);err == nil{ //创建一个TCP连接:TCPConn
-			client.donechan = make(chan struct{})
+			var host IConHost
+			if lastedHost := client.LastedSubChild();lastedHost != nil{
+				if Ahost,ok := lastedHost.(IConHost);!ok{
+					host = client
+				}else{
+					host = Ahost
+				}
+			}else{
+				host = client
+			}
 			client.Clientcon.unActive.Store(false)
 			client.Clientcon.con = conn
+			client.Done()
 			client.Clientcon.LoginTime = time.Now() //登录时间
 			client.Clientcon.ConHandle = uint(uintptr(unsafe.Pointer(client)))
-			client.Clientcon.conHost = client
+			client.Clientcon.conHost = host
 			client.Clientcon.IsClientcon = true
 			client.Clientcon.protocol = nil
 			if client.encoder != nil{
@@ -92,13 +107,18 @@ func (client *DxTcpClient)HandleDisConnectEvent(con *DxNetConnection) {
 	}
 }
 
+func (client *DxTcpClient)AfterDisConnected(con *DxNetConnection)   {
+	if client.AfterClientDisConnected != nil{
+		client.AfterClientDisConnected(con)
+	}
+}
+
 func (client *DxTcpClient)HeartTimeOutSeconds() int32 {
 	return client.TimeOutSeconds
 }
 
 func (client *DxTcpClient)Close()  {
 	if client.Active(){
-		close(client.donechan)
 		client.Clientcon.Close()
 	}
 }

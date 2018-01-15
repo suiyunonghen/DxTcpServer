@@ -12,13 +12,18 @@ func main()  {
 	app := controls.NewApplication()
 	srv := Ftp.NewFtpServer()
 
+	//设置anonymouse可以下载
+	srv.SetAnonymouseFilePermission(true,true,true,false)
+
+	//FTP登录的时候，新增用户,赋予密码以及权限等
 	srv.OnGetFtpUser = func(userId string) *Ftp.FtpUser {
 		if userId == "DxSoft"{
 			result := new(Ftp.FtpUser)
 			result.UserID = userId
 			result.PassWord = "DxSoft"
+			//赋值权限为匿名用户权限
 			srv.CopyAnonymousUserPermissions(result)
-			//赋值权限
+			result.Permission.SetFileWritePermission(true)
 			return result
 		}
 		return nil

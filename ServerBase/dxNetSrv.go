@@ -121,6 +121,7 @@ type DxTcpServer struct {
 	OnClientConnect			func(con *DxNetConnection)interface{}
 	OnClientDisConnected	GConnectEvent
 	OnSrvClose				func()
+	AfterClientDisConnected	GConnectEvent
 	OnSendData				GOnSendDataEvent
 	AfterEncodeData			GOnSendDataEvent
 	TimeOutSeconds			int32
@@ -199,6 +200,12 @@ func (srv *DxTcpServer) Done()<-chan struct{}  {
 
 func (srv *DxTcpServer)CustomRead(con *DxNetConnection,targetData interface{})bool  {
 	return false
+}
+
+func (srv *DxTcpServer)AfterDisConnected(con *DxNetConnection)   {
+	if srv.AfterClientDisConnected!=nil{
+		srv.AfterClientDisConnected(con)
+	}
 }
 
 func (srv *DxTcpServer)Run()  {

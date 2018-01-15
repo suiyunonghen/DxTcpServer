@@ -70,6 +70,7 @@ type(
 		curPosition		uint32
 		lastFilePos		uint32
 		waitReadChan	chan struct{}
+		portDataClient	*ftpDataClient
 	}
 
 	FTPServer struct{
@@ -85,6 +86,7 @@ type(
 		MinPasvPort			uint16			//被动数据请求的开放端口范围
 		MaxPasvPort			uint16
 		clientPool			sync.Pool
+		portClientPool		sync.Pool
 		OnGetFtpUser		func(userId string)*FtpUser  //当在用户列表中没找到的时候，触发本函数查找用户
 	}
 
@@ -107,6 +109,15 @@ type(
 		MustLogin()bool
 		MustUtf8()bool
 		HasParams()bool
+	}
+
+
+	//主动模式的数据连接端
+	ftpDataClient    struct{
+		ftpsrv				*FTPServer
+		ServerBase.DxTcpClient
+		clientbind			dataClientBinds
+		dataBuffer			*bytes.Buffer
 	}
 
 	cmdBase		struct{}
@@ -138,6 +149,7 @@ type(
 	cmdRNTO		struct{cmdBase}
 	cmdRMD		struct{cmdBase}
 	cmdSTRU		struct{cmdBase}
+	cmdPORT		struct{cmdBase}
 )
 
 const(
@@ -165,6 +177,7 @@ var (
 		"TYPE":			cmdTYPE{},
 		"CWD":			cmdCWD{},
 		"PASV":			cmdPASV{},
+		"PORT":			cmdPORT{},
 		"LIST":			cmdLIST{},
 		"CDUP":			cmdCDUP{},
 		"RETR":			cmdRETR{},
@@ -224,10 +237,11 @@ var (
 	noDelDirPermission = ftpResponsePkg{551,"Directory delete failed: No Del Dir Permission",false}
 	noCreateDirPermission = ftpResponsePkg{551,"Create Directory failed: No MkDir Permission",false}
 	noWriteFilePermission = ftpResponsePkg{551,"Upload File failed: No Write Permission",false}
-	noDelFilePermission = ftpResponsePkg{551,"Del File failed: No Write Permission",false}
+	noDelFilePermission = ftpResponsePkg{551,"Del File failed: No Delete Permission",false}
 	noAppendFilePermission = ftpResponsePkg{551,"Append File failed: No Append Permission",false}
 	noReadFilePermission = ftpResponsePkg{551,"DownLoad File failed: No Read Permission",false}
 	noListPermission = ftpResponsePkg{551,"No List Permission",false}
+	conPortDataSrvErrPkg = ftpResponsePkg{425,"Connect Port DataServer failed",false}
 )
 
 
@@ -240,6 +254,51 @@ func init() {
 	}
 	featcmdPkg.responseMsg = featCmds
 }
+
+
+func (dataClient *ftpDataClient) SubInit() {
+	dataClient.DxTcpClient.SubInit()
+	dataClient.GDxBaseObject.SubInit(dataClient)
+}
+
+func (dataclient *ftpDataClient)CustomRead(con *ServerBase.DxNetConnection,targetdata interface{})bool  {
+	if dataclient.clientbind.waitReadChan != nil{
+		select{
+		case <-dataclient.clientbind.waitReadChan:
+		}
+	}
+	dataclient.clientbind.waitReadChan = nil
+	if dataclient.clientbind.f == nil{
+		return  true
+	}
+	lreader := io.LimitedReader{con,44*1460}
+	for{
+		rl,err := io.Copy(dataclient.dataBuffer,&lreader)
+		lreader.N = 44*1460
+		dataclient.clientbind.ftpClient.cmdcon.LastValidTime.Store(time.Now()) //更新一下命令处理连接的操作数据时间
+		if rl != 0{
+			dataclient.clientbind.curPosition += uint32(rl)
+			dataclient.dataBuffer.WriteTo(dataclient.clientbind.f)
+			if err != nil{
+				break
+			}
+		}else{
+			break
+		}
+	}
+	//读取完了，执行关闭，然后释放
+	dataclient.clientbind.f.Close()
+	dataclient.clientbind.f = nil
+	dataclient.clientbind.ftpClient.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintln("OK, received %d bytes",dataclient.clientbind.curPosition),false})
+	dataclient.clientbind.curPosition = 0
+	dataclient.clientbind.ftpClient.lastPos = 0
+	return true
+}
+
+func (client *ftpDataClient)onDataClientClose(con *ServerBase.DxNetConnection)  {
+	client.ftpsrv.freeDataClient(client)
+}
+
 
 func (permission FTPPermission)CanReadFile()bool  {
 	return uint32(permission) & Permission_File_Read == Permission_File_Read
@@ -715,7 +774,13 @@ func (cmd cmdRETR)petrFile(params ...interface{})  {
 	}else{
 		bufsize = 44 * 1460
 	}
-	buffer := srv.dataServer.GetBuffer(bufsize)
+
+	var buffer *bytes.Buffer
+	if !client.datacon.IsClientcon{
+		buffer = srv.dataServer.GetBuffer(bufsize)
+	}else{
+		buffer = client.datacon.GetUseData().(*dataClientBinds).portDataClient.dataBuffer
+	}
 	maxsize := int64(bufsize)
 	lreader := io.LimitedReader{f,maxsize}
 	for{
@@ -737,7 +802,11 @@ func (cmd cmdRETR)petrFile(params ...interface{})  {
 	client.datacon.Close() //数据连接关闭
 	client.datacon = nil
 	client.lastPos = 0
-	srv.dataServer.ReciveBuffer(buffer)
+	if !client.datacon.IsClientcon {
+		srv.dataServer.ReciveBuffer(buffer)
+	}else{
+		buffer.Reset()
+	}
 }
 
 func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -753,7 +822,9 @@ func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	path = srv.localPath(path)
 	rPath, err := filepath.Abs(path)
 	dataclient.lastFilePos = uint32(client.lastPos)
-	close(dataclient.waitReadChan) //通知可以读了
+	if dataclient.waitReadChan != nil{
+		close(dataclient.waitReadChan) //通知可以读了
+	}
 	if err != nil {
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln(paramstr, "RETR Error: ",err.Error()),false})
 		return
@@ -771,7 +842,48 @@ func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	f.Seek(int64(dataclient.lastFilePos), os.SEEK_SET)
 	totalsize := info.Size() - int64(dataclient.lastFilePos)
 	con.WriteObject(&ftpResponsePkg{150,fmt.Sprintf("Data transfer starting %v bytes", totalsize),false})
-	DxCommonLib.PostFunc(cmd.petrFile,srv,f,client,totalsize)
+	//DxCommonLib.PostFunc(cmd.petrFile,srv,f,client,totalsize)
+
+	rsize := 0
+	var bufsize int
+	if totalsize < 44 * 1460{
+		bufsize = int(totalsize)
+	}else{
+		bufsize = 44 * 1460
+	}
+
+	var buffer *bytes.Buffer
+	if !client.datacon.IsClientcon{
+		buffer = srv.dataServer.GetBuffer(bufsize)
+	}else{
+		buffer = dataclient.portDataClient.dataBuffer
+	}
+	maxsize := int64(bufsize)
+	lreader := io.LimitedReader{f,maxsize}
+	for{
+		rl,err := io.Copy(buffer,&lreader)
+		lreader.N = maxsize
+		client.cmdcon.LastValidTime.Store(time.Now()) //更新一下命令处理连接的操作数据时间
+		if rl != 0{
+			rsize += int(rl)
+			buffer.WriteTo(client.datacon)
+			if err != nil{
+				break
+			}
+		}else{
+			break
+		}
+	}
+	f.Close()
+	client.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintf("Closing data connection,TotalSize %d sent %d bytes",totalsize,rsize),false})
+	if !client.datacon.IsClientcon {
+		srv.dataServer.ReciveBuffer(buffer)
+	}else{
+		buffer.Reset()
+	}
+	client.datacon.Close() //数据连接关闭
+	client.datacon = nil
+	client.lastPos = 0
 }
 
 func (cmd cmdCDUP)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
@@ -801,12 +913,16 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	client := con.GetUseData().(*ftpClientBinds)
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	if !client.user.Permission.CanListDir(){
-		close(dataclient.waitReadChan) //通知可以读了
+		if dataclient.waitReadChan != nil {
+			close(dataclient.waitReadChan) //通知可以读了
+		}
 		con.WriteObject(&noListPermission)
 		return
 	}
 	var fpath string
-	close(dataclient.waitReadChan) //通知可以读了
+	if dataclient.waitReadChan != nil {
+		close(dataclient.waitReadChan) //通知可以读了
+	}
 	fields := strings.Fields(paramstr)
 	for _, field := range fields {
 		if strings.HasPrefix(field, "-") {
@@ -929,11 +1045,15 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	client := con.GetUseData().(*ftpClientBinds)
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	if !client.user.Permission.CanListDir(){
-		close(dataclient.waitReadChan) //通知可以读了
+		if dataclient.waitReadChan != nil {
+			close(dataclient.waitReadChan) //通知可以读了
+		}
 		con.WriteObject(&noListPermission)
 		return
 	}
-	close(dataclient.waitReadChan) //通知可以读了
+	if !client.datacon.IsClientcon && dataclient.waitReadChan != nil{
+		close(dataclient.waitReadChan) //通知可以读了
+	}
 	if len(paramstr) == 0 {
 		fpath = paramstr
 	} else {
@@ -1045,6 +1165,28 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	client.datacon.Close()
 	client.datacon = nil
 	srv.ReciveBuffer(buffer)
+}
+
+
+func (cmd cmdPORT)HasParams()bool  {
+	return false
+}
+
+func (cmd cmdPORT)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
+	//主动模式,主动连接客户端
+	nums := strings.Split(paramstr, ",")
+	portOne, _ := strconv.Atoi(nums[4])
+	portTwo, _ := strconv.Atoi(nums[5])
+	port := (portOne * 256) + portTwo
+	PortHost := fmt.Sprintf("%s.%s.%s.%s:%d",nums[0],nums[1],nums[2],nums[3],port)
+	client := con.GetUseData().(*ftpClientBinds)
+	dataclient := srv.getDataClient(client)
+	if err := dataclient.Connect(PortHost);err!=nil{
+		con.WriteObject(&conPortDataSrvErrPkg)
+	}else{
+		client.datacon = &dataclient.Clientcon
+		con.WriteObject(&ftpResponsePkg{200,fmt.Sprintf("Connect Port DataServer OK! port=%d",port),false})
+	}
 }
 
 func (cmd cmdPASV)HasParams()bool  {
@@ -1491,7 +1633,6 @@ func (srv *ftpDataServer)dataClientDisconnect(con *ServerBase.DxNetConnection)  
 	}
 }
 
-
 //自定义读取文件的接口
 func (srv *ftpDataServer)CustomRead(con *ServerBase.DxNetConnection,targetdata interface{})bool{
 	//这里需要等待con绑定到用户
@@ -1580,6 +1721,34 @@ func (srv *FTPServer)createDataServer(port uint16,con *ServerBase.DxNetConnectio
 func (srv *FTPServer) SubInit() {
 	srv.DxTcpServer.SubInit()
 	srv.GDxBaseObject.SubInit(srv)
+}
+
+func (srv *FTPServer) getDataClient(client *ftpClientBinds)(dataclient *ftpDataClient)  {
+	v := srv.portClientPool.Get()
+	if v == nil{
+		dataclient = new(ftpDataClient)
+		dataclient.ftpsrv = srv
+		dataclient.SubInit()
+		dataclient.clientbind.portDataClient = dataclient
+		dataclient.dataBuffer = bytes.NewBuffer(make([]byte,0,44*1460))
+		dataclient.AfterClientDisConnected = dataclient.onDataClientClose
+	}else{
+		dataclient = v.(*ftpDataClient)
+		dataclient.dataBuffer.Reset()
+	}
+	dataclient.clientbind.ftpClient = client
+	dataclient.Clientcon.SetUseData(&dataclient.clientbind)
+	dataclient.clientbind.waitReadChan = make(chan struct{}) //等待可读
+	return
+}
+
+func (srv *FTPServer) freeDataClient(client *ftpDataClient)  {
+	client.clientbind.waitReadChan = nil
+	client.clientbind.ftpClient = nil
+	client.clientbind.f = nil
+	client.clientbind.curPosition = 0
+	client.clientbind.lastFilePos = 0
+	srv.portClientPool.Put(client)
 }
 
 func (srv *FTPServer)SetAnonymouseDirPermission(canCreateDir,canDelDir,canListDir,canSubDirs bool)  {
