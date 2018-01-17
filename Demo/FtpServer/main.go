@@ -6,12 +6,17 @@ import (
 	"github.com/suiyunonghen/GVCL/WinApi"
 	"unsafe"
 	"syscall"
+	"fmt"
 )
 
 func main()  {
 	app := controls.NewApplication()
 	srv := Ftp.NewFtpServer()
 
+	client := Ftp.NewFtpClient(Ftp.TDM_AUTO)
+	client.OnResultResponse = func(responseCode uint16, msg string) {
+		fmt.Println("ResponseInfo:  ",responseCode,"  ",msg)
+	}
 	//设置anonymouse可以下载
 	srv.SetAnonymouseFilePermission(true,true,true,false)
 
@@ -38,6 +43,23 @@ func main()  {
 		WinApi.ShellExecute(mainForm.GetWindowHandle(),uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("OPEN"))),
 			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("https://github.com/suiyunonghen"))),0,0,WinApi.SW_SHOWNORMAL)
 	}
+
+	mItem = PopMenu.Items().AddItem("连接FTP")
+	mItem.OnClick = func(sender interface{}) {
+		client.Connect("127.0.0.1:8340")
+		if err := client.Login("DxSoft","DxSoft");err == nil{
+			fmt.Println("login OK")
+		}else{
+			fmt.Println("login failed:",err)
+		}
+		if _,err := client.ExecuteFtpCmd("PWD","",1);err != nil{
+			return
+		}
+		client.ExecuteFtpCmd("OPTS","UTF8 ON",1)
+		//获取目录信息
+		client.ListDir("/")
+	}
+
 	mItem = PopMenu.Items().AddItem("-")
 	mItem = PopMenu.Items().AddItem("退出")
 	mItem.OnClick = func(sender interface{}) {
@@ -50,6 +72,6 @@ func main()  {
 	//在GUI运行之前，开启文件服务功能
 	srv.MapDir("FtpDir1","F:\\FTp1",true)
 	//srv.MapDir("FtpDir2","H:\\FtpDir2",false)
-	srv.Open("127.0.0.1:8340")
+	srv.Open(":8340")
 	app.Run()
 }

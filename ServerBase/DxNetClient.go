@@ -154,6 +154,13 @@ func (client *DxTcpClient)doOnSendData(params ...interface{})  {
 	client.OnSendData(params[0].(*DxNetConnection),params[1],params[2].(int),params[3].(bool))
 }
 
+func (client *DxTcpClient)SendBytes(b []byte) bool {
+	if !client.Active(){
+		return false
+	}
+	return client.Clientcon.writeBytes(b)
+}
+
 func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool{
 	if !client.Active(){
 		return false
