@@ -832,6 +832,10 @@ func (cmd cmdRETR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	client.lastPos = 0
 }
 
+func (cmd cmdCDUP)HasParams()bool  {
+	return false
+}
+
 func (cmd cmdCDUP)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr string)  {
 	//回到上级目录
 	/*var ocmd cmdCWD
@@ -888,7 +892,31 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		srv.ftpDirectorys.Range(func(key, value interface{}) bool {
 			dirs := value.(*ftpDirs)
 			finfo,err = os.Stat(dirs.localPathName)
-			buffer.WriteString(finfo.Mode().String())
+			//buffer.WriteString(finfo.Mode().String())
+			modestr := []byte(finfo.Mode().String())
+			//判断用户的权限
+			if finfo.IsDir(){
+				if !client.user.Permission.CanListDir(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanCreateDir() && client.user.Permission.CanDelDir()){
+					modestr[2] = '-'
+				}
+			}else{
+				if !client.user.Permission.CanReadFile(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanWriteFile() && client.user.Permission.CanAppendFile() &&
+					client.user.Permission.CanDelFile()){
+					modestr[2] = '-'
+				}
+			}
+			modestr[4] = modestr[1]
+			modestr[5] = modestr[2]
+			modestr[7] = modestr[1]
+			modestr[8] = modestr[2]
+			buffer.Write(modestr)
+
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(finfo.Size())), 12))
 			buffer.WriteString(finfo.ModTime().Format(" Jan _2 15:04 "))
@@ -909,7 +937,31 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			}
 			rPath, _ := filepath.Rel(srv.maindir.localPathName, path)
 			if rPath == info.Name(){
-				buffer.WriteString(info.Mode().String())
+				//buffer.WriteString(info.Mode().String())
+				modestr := []byte(info.Mode().String())
+				//判断用户的权限
+				if info.IsDir(){
+					if !client.user.Permission.CanListDir(){
+						modestr[1] = '-'
+					}
+					if !(client.user.Permission.CanCreateDir() && client.user.Permission.CanDelDir()){
+						modestr[2] = '-'
+					}
+				}else{
+					if !client.user.Permission.CanReadFile(){
+						modestr[1] = '-'
+					}
+					if !(client.user.Permission.CanWriteFile() && client.user.Permission.CanAppendFile() &&
+						client.user.Permission.CanDelFile()){
+						modestr[2] = '-'
+					}
+				}
+				modestr[4] = modestr[1]
+				modestr[5] = modestr[2]
+				modestr[7] = modestr[1]
+				modestr[8] = modestr[2]
+				buffer.Write(modestr)
+
 				buffer.WriteString(" 1 System System ")
 				buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 				buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
@@ -954,7 +1006,31 @@ func (cmd cmdNLST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		}
 		rPath, _ := filepath.Rel(path, fpath)
 		if rPath == info.Name(){
-			buffer.WriteString(info.Mode().String())
+			//buffer.WriteString(info.Mode().String())
+			modestr := []byte(info.Mode().String())
+			//判断用户的权限
+			if info.IsDir(){
+				if !client.user.Permission.CanListDir(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanCreateDir() && client.user.Permission.CanDelDir()){
+					modestr[2] = '-'
+				}
+			}else{
+				if !client.user.Permission.CanReadFile(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanWriteFile() && client.user.Permission.CanAppendFile() &&
+					client.user.Permission.CanDelFile()){
+					modestr[2] = '-'
+				}
+			}
+			modestr[4] = modestr[1]
+			modestr[5] = modestr[2]
+			modestr[7] = modestr[1]
+			modestr[8] = modestr[2]
+			buffer.Write(modestr)
+
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 			buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
@@ -1025,7 +1101,31 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			if err != nil{
 				return false
 			}
-			buffer.WriteString(finfo.Mode().String())
+			//buffer.WriteString(finfo.Mode().String())
+			modestr := []byte(finfo.Mode().String())
+			//判断用户的权限
+			if finfo.IsDir(){
+				if !client.user.Permission.CanListDir(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanCreateDir() && client.user.Permission.CanDelDir()){
+					modestr[2] = '-'
+				}
+			}else{
+				if !client.user.Permission.CanReadFile(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanWriteFile() && client.user.Permission.CanAppendFile() &&
+					client.user.Permission.CanDelFile()){
+					modestr[2] = '-'
+				}
+			}
+			modestr[4] = modestr[1]
+			modestr[5] = modestr[2]
+			modestr[7] = modestr[1]
+			modestr[8] = modestr[2]
+			buffer.Write(modestr)
+
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(finfo.Size())), 12))
 			buffer.WriteString(finfo.ModTime().Format(" Jan _2 15:04 "))
@@ -1046,7 +1146,29 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 			}
 			rPath, _ := filepath.Rel(srv.maindir.localPathName, path)
 			if rPath == info.Name(){
-				buffer.WriteString(info.Mode().String())
+				modestr := []byte(info.Mode().String())
+				//判断用户的权限
+				if info.IsDir(){
+					if !client.user.Permission.CanListDir(){
+						modestr[1] = '-'
+					}
+					if !(client.user.Permission.CanCreateDir() && client.user.Permission.CanDelDir()){
+						modestr[2] = '-'
+					}
+				}else{
+					if !client.user.Permission.CanReadFile(){
+						modestr[1] = '-'
+					}
+					if !(client.user.Permission.CanWriteFile() && client.user.Permission.CanAppendFile() &&
+						client.user.Permission.CanDelFile()){
+						modestr[2] = '-'
+					}
+				}
+				modestr[4] = modestr[1]
+				modestr[5] = modestr[2]
+				modestr[7] = modestr[1]
+				modestr[8] = modestr[2]
+				buffer.Write(modestr)
 				buffer.WriteString(" 1 System System ")
 				buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 				buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
@@ -1091,7 +1213,31 @@ func (cmd cmdLIST)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		}
 		rPath, _ := filepath.Rel(path, fpath)
 		if rPath == info.Name(){
-			buffer.WriteString(info.Mode().String())
+			//buffer.WriteString(info.Mode().String())
+			modestr := []byte(info.Mode().String())
+			//判断用户的权限
+			if info.IsDir(){
+				if !client.user.Permission.CanListDir(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanCreateDir() && client.user.Permission.CanDelDir()){
+					modestr[2] = '-'
+				}
+			}else{
+				if !client.user.Permission.CanReadFile(){
+					modestr[1] = '-'
+				}
+				if !(client.user.Permission.CanWriteFile() && client.user.Permission.CanAppendFile() &&
+					client.user.Permission.CanDelFile()){
+					modestr[2] = '-'
+				}
+			}
+			modestr[4] = modestr[1]
+			modestr[5] = modestr[2]
+			modestr[7] = modestr[1]
+			modestr[8] = modestr[2]
+			buffer.Write(modestr)
+
 			buffer.WriteString(" 1 System System ")
 			buffer.WriteString(lpad(strconv.Itoa(int(info.Size())), 12))
 			buffer.WriteString(info.ModTime().Format(" Jan _2 15:04 "))
@@ -1405,7 +1551,6 @@ func NewFtpServer()*FTPServer  {
 	result.OnRecvData = func(con *ServerBase.DxNetConnection,recvData interface{}) {
 		cmdpkg := recvData.(*ftpcmdpkg)
 		v := DxCommonLib.FastByte2String(cmdpkg.cmd)
-		fmt.Println(v)
 		if cmd,ok := ftpCmds[v];!ok{
 			con.WriteObject(&unknowCmdPkg)
 		}else {
@@ -1433,7 +1578,6 @@ func NewFtpServer()*FTPServer  {
 				}
 			}
 			paramstr := DxCommonLib.FastByte2String(bt)
-			fmt.Println(paramstr)
 			cmd.Execute(result,con,paramstr)
 		}
 	}
@@ -1748,32 +1892,17 @@ func (srv *FTPServer)freeFtpClient(client *ftpClientBinds)  {
 }
 
 func (srv *FTPServer)ChangeDir(fullpath string)error  {
-	paths := strings.Split(fullpath, "/")
-	rdir := strings.ToUpper(paths[0]) //第一个目录是用户指定的目录
-	if rdir == "" && len(paths)>1{
-		rdir = strings.ToUpper(paths[1])
-		if len(paths)>2{
-			paths = paths[2:]
-		}else{
-			paths = paths[1:1]
-		}
+	path := srv.localPath(fullpath)
+	if path == ""{
+		return nil
 	}
-	if rdir == ""{
-		//根目录,回到根目录
-		return  nil
+	f, err := os.Lstat(path)
+	if err != nil {
+		return err
 	}
-	if v,ok := srv.ftpDirectorys.Load(rdir);ok{
-		dirs := v.(*ftpDirs)
-		rdir = filepath.Join(append([]string{dirs.localPathName}, paths...)...)
-		f, err := os.Lstat(rdir)
-		if err != nil {
-			return err
-		}
-		if f.IsDir() {
-			return nil
-		}else{
-			return noDirError
-		}
+	if f.IsDir() {
+		return nil
+	}else{
+		return noDirError
 	}
-	return dirNoExistError
 }

@@ -57,7 +57,10 @@ func main()  {
 		}
 		client.ExecuteFtpCmd("OPTS","UTF8 ON",1)
 		//获取目录信息
-		client.ListDir("/")
+		fmt.Println("List: ")
+		client.ListDir("/", func(ftpFileinfo *Ftp.FTPFile) {
+			fmt.Println(ftpFileinfo)
+		})
 	}
 
 	mItem = PopMenu.Items().AddItem("-")
@@ -70,7 +73,7 @@ func main()  {
 	trayicon.PopupMenu = PopMenu
 	trayicon.SetVisible(true)
 	//在GUI运行之前，开启文件服务功能
-	srv.MapDir("FtpDir1","F:\\FTp1",true)
+	srv.MapDir("FtpDir1","F:\\Web",true)
 	//srv.MapDir("FtpDir2","H:\\FtpDir2",false)
 	srv.Open(":8340")
 	app.Run()

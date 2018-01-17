@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"fmt"
 	"sync"
+	"os"
 )
 
 var(
@@ -24,6 +25,16 @@ var(
 )
 
 type TransDataMode uint8
+
+type FTPFile		struct{
+	Mode			os.FileMode
+	ModifyTime		time.Time
+	Name			string
+	Attribute		string
+	User			string
+	Group			string
+	Size			int
+}
 
 type FtpClient struct {
 	ServerBase.DxTcpClient
@@ -39,11 +50,29 @@ type FtpClient struct {
 	ftpClientBinds
 }
 
+
 const(
 	TDM_AUTO		TransDataMode = iota
 	TDM_PASV
 	TDM_PORT
 )
+
+var shortMonthNames = []string{
+	"---",
+	"JAN",
+	"FEB",
+	"MAR",
+	"APR",
+	"MAY",
+	"JUN",
+	"JUL",
+	"AUG",
+	"SEP",
+	"OCT",
+	"NOV",
+	"DEC",
+}
+
 
 func (ftpclient *FtpClient)SubInit()  {
 	ftpclient.DxTcpClient.SubInit()
@@ -113,13 +142,14 @@ func (ftpclient *FtpClient)DownLoad(fileName string)error{
 	return nil
 }
 
-func (ftpclient *FtpClient)ListDir(dirName string)error  {
+func (ftpclient *FtpClient)ListDir(dirName string,listfunc func(ftpFileinfo *FTPFile))error  {
 	var (
 		respkg *ftpResponsePkg
 		err error
 		buffer *bytes.Buffer
 	)
-
+	oldmode := ftpclient.fDataMode
+	redo:
 	if ftpclient.fDataMode == TDM_AUTO || ftpclient.fDataMode == TDM_PASV{
 		//优先启用被动模式
 		respkg,err = ftpclient.ExecuteFtpCmd("PASV","",1)
@@ -150,12 +180,12 @@ func (ftpclient *FtpClient)ListDir(dirName string)error  {
 		dataclient := ftpclient.getDataClient(&ftpclient.ftpClientBinds)
 		dataclient.clientbind.waitReadChan = make(chan struct{}) //等待读取
 		if err := dataclient.Connect(PortHost);err!=nil{
-
 			close(dataclient.clientbind.waitReadChan)
 			dataclient.clientbind.waitReadChan = nil
 			ftpclient.freeDataClient(dataclient)
 			//准备转到Port模式
-			return err
+			ftpclient.fDataMode = TDM_PORT
+			goto redo
 		}
 		//发送List指令
 		buffer = bytes.NewBuffer(make([]byte,0,4096))
@@ -163,37 +193,61 @@ func (ftpclient *FtpClient)ListDir(dirName string)error  {
 		close(dataclient.clientbind.waitReadChan)
 	}else{
 		//主动模式，先开启一个数据接收服务端
+
 	}
 	//等待返回数据
 	transOk := make(chan struct{})
 	ftpclient.transOk = transOk
+	done := ftpclient.Done()
 	respkg,err = ftpclient.ExecuteFtpCmd("LIST",dirName,2) //第二个返回才是结果
 	if err != nil{
+		ftpclient.fDataMode = oldmode
 		return err
 	}
 	if respkg.responseCode == 226{
 		select{
+		case <-done:
+			return ErrConnectionLost
 		case <-transOk:
+			now := time.Now()
+			year := 0
+			fileinfo := &FTPFile{}
+			for{
+				linebyte,err := buffer.ReadBytes('\n')
+				linebyte = bytes.Trim(linebyte,"\r\n")
+				fileInfos := strings.Fields(string(linebyte))
+				if len(fileInfos)>0{
+					fileinfo.Attribute = fileInfos[0]
+					fileinfo.User = fileInfos[2]
+				 	fileinfo.Group = fileInfos[3]
+					fileinfo.Mode = DxCommonLib.ModePermStr2FileMode(fileInfos[0])
+					if fileinfo.Mode.IsDir(){
+						fileinfo.Size = 0
+					}else{
+						fileinfo.Size,_ = strconv.Atoi(fileInfos[4])
+					}
 
-		}
-		for{
-			linebyte,err := buffer.ReadBytes('\n')
-			linebyte = bytes.Trim(linebyte,"\r\n")
-			fileInfos := strings.Fields(string(linebyte))
-			fmt.Println(fileInfos)
-			if len(fileInfos)>0{
-				fmt.Println(fileInfos[0]) //FieldMode
-				fmt.Println(fileInfos[1]) //User
-				fmt.Println(fileInfos[2]) //Group
-				fmt.Println(fileInfos[3]) //FileSize
-				//4,5,6结合为时间
-				fmt.Println(fileInfos[len(fileInfos)-1]) //名称
+					if shortMonthNames[now.Month()] != strings.ToUpper(fileInfos[5]){
+						year = now.Year() - 1
+					}else{
+						year = now.Year()
+					}
+					day,_ := strconv.Atoi(fileInfos[6])
+					index := strings.IndexByte(fileInfos[7],':')
+					hour,_ := strconv.Atoi(string([]byte(fileInfos[7])[:index]))
+					mint,_ := strconv.Atoi(string([]byte(fileInfos[7])[index+1:]))
+					fileinfo.ModifyTime = time.Date(year,now.Month(),day,hour,mint,0,0,time.Local)
+					fileinfo.Name = fileInfos[len(fileInfos)-1]
+					if listfunc != nil{
+						listfunc(fileinfo)
+					}
+				}
+				if err != nil{
+					break
+				}
 			}
-			if err != nil{
-				break
-			}
+			return nil
 		}
-		return nil
 	}
 	return errors.New(respkg.responseMsg)
 }
