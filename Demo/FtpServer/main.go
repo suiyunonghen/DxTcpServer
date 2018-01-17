@@ -13,7 +13,7 @@ func main()  {
 	app := controls.NewApplication()
 	srv := Ftp.NewFtpServer()
 
-	client := Ftp.NewFtpClient(Ftp.TDM_AUTO)
+	client := Ftp.NewFtpClient(Ftp.TDM_PORT)
 	client.OnResultResponse = func(responseCode uint16, msg string) {
 		fmt.Println("ResponseInfo:  ",responseCode,"  ",msg)
 	}

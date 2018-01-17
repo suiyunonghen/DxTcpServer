@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sync"
 	"os"
+	"math/rand"
 )
 
 var(
@@ -46,7 +47,9 @@ type FtpClient struct {
 	transOk				chan struct{}
 	OnResultResponse	func(responseCode uint16, msg string)
 	fDataMode			TransDataMode
+	dataServer			*ftpDataServer
 	portClientPool		sync.Pool
+	PublicIP			string
 	ftpClientBinds
 }
 
@@ -142,6 +145,73 @@ func (ftpclient *FtpClient)DownLoad(fileName string)error{
 	return nil
 }
 
+
+func (ftpclient *FtpClient)createDataServer(port uint16,con *ServerBase.DxNetConnection)error  {
+	if ftpclient.dataServer == nil{
+		ftpclient.dataServer = new(ftpDataServer)
+		ftpclient.dataServer.SubInit() //继承一步
+		ftpclient.dataServer.TimeOutSeconds = 5 //5秒钟没数据关闭
+		ftpclient.dataServer.SrvLogger = ftpclient.ClientLogger
+		ftpclient.dataServer.curCon.Store(con)
+		ftpclient.dataServer.OnClientConnect = ftpclient.dataServer.ClientConnect
+		ftpclient.dataServer.OnClientDisConnected = ftpclient.dataServer.dataClientDisconnect
+	}
+	ftpclient.dataServer.lastDataTime.Store(time.Time{})
+	ftpclient.dataServer.port = port
+	if !ftpclient.dataServer.Active(){
+		if err := ftpclient.dataServer.Open(fmt.Sprintf(":%d",port));err!=nil{
+			return err
+		}
+		//开启一个监听的，然后监控服务的空闲时间
+		//DxCommonLib.PostFunc(ftpclient.checkDataServerIdle)
+	}
+	return nil
+}
+
+func (ftpclient *FtpClient)port()error  {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	port := 40000 + uint16(r.Intn(10000))
+	if err := ftpclient.createDataServer(port,&ftpclient.Clientcon);err!=nil{
+		return err
+	}
+	listenIP := ftpclient.PublicIP
+	if len(listenIP)==0{
+		listenIP = ftpclient.Clientcon.Address()
+	}
+	idx := strings.IndexByte(listenIP,':')
+	if idx > -1{
+		listenIP = string([]byte(listenIP)[:idx])
+	}
+	p1 := port / 256
+	p2 := port - (p1 * 256)
+	quads := strings.Split(listenIP, ".")
+	ftpclient.dataServer.notifyBindOk = make(chan struct{})
+	ftpclient.dataServer.waitBindChan = make(chan struct{})
+	respkg,err := ftpclient.ExecuteFtpCmd("PORT",fmt.Sprintf("%s,%s,%s,%s,%d,%d", quads[0], quads[1], quads[2], quads[3], p1, p2),1)
+	if err != nil{
+		ftpclient.dataServer.curCon.Store(0)
+		close(ftpclient.dataServer.notifyBindOk)
+		close(ftpclient.dataServer.waitBindChan)
+		return err
+	}else if respkg.responseCode != 200{
+		ftpclient.dataServer.curCon.Store(0)
+		close(ftpclient.dataServer.notifyBindOk)
+		close(ftpclient.dataServer.waitBindChan)
+		return errors.New(respkg.responseMsg)
+	}
+	//然后执行等待链接并且绑定
+	select{
+	case  <-ftpclient.dataServer.notifyBindOk:
+		ftpclient.dataServer.notifyBindOk = nil
+	case <-DxCommonLib.After(time.Second*30):
+		ftpclient.dataServer.curCon.Store(0)
+		close(ftpclient.dataServer.notifyBindOk)
+		return errors.New("No DataClient Connected")
+	}
+	close(ftpclient.dataServer.waitBindChan)
+	return nil
+}
+
 func (ftpclient *FtpClient)ListDir(dirName string,listfunc func(ftpFileinfo *FTPFile))error  {
 	var (
 		respkg *ftpResponsePkg
@@ -193,7 +263,14 @@ func (ftpclient *FtpClient)ListDir(dirName string,listfunc func(ftpFileinfo *FTP
 		close(dataclient.clientbind.waitReadChan)
 	}else{
 		//主动模式，先开启一个数据接收服务端
-
+		err = ftpclient.port()
+		if err != nil{
+			return err
+		}
+		dataclientbind := ftpclient.datacon.GetUseData().(*dataClientBinds)
+		buffer = bytes.NewBuffer(make([]byte,0,4096))
+		dataclientbind.f = buffer
+		close(dataclientbind.waitReadChan)
 	}
 	//等待返回数据
 	transOk := make(chan struct{})
