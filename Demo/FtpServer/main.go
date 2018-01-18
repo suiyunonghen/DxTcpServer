@@ -6,17 +6,12 @@ import (
 	"github.com/suiyunonghen/GVCL/WinApi"
 	"unsafe"
 	"syscall"
-	"fmt"
 )
 
 func main()  {
 	app := controls.NewApplication()
 	srv := Ftp.NewFtpServer()
 
-	client := Ftp.NewFtpClient(Ftp.TDM_PORT)
-	client.OnResultResponse = func(responseCode uint16, msg string) {
-		fmt.Println("ResponseInfo:  ",responseCode,"  ",msg)
-	}
 	//设置anonymouse可以下载
 	srv.SetAnonymouseFilePermission(true,true,true,false)
 
@@ -42,25 +37,6 @@ func main()  {
 		//通过网页返回服务端消息
 		WinApi.ShellExecute(mainForm.GetWindowHandle(),uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("OPEN"))),
 			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("https://github.com/suiyunonghen"))),0,0,WinApi.SW_SHOWNORMAL)
-	}
-
-	mItem = PopMenu.Items().AddItem("连接FTP")
-	mItem.OnClick = func(sender interface{}) {
-		client.Connect("127.0.0.1:8340")
-		if err := client.Login("DxSoft","DxSoft");err == nil{
-			fmt.Println("login OK")
-		}else{
-			fmt.Println("login failed:",err)
-		}
-		if _,err := client.ExecuteFtpCmd("PWD","",1);err != nil{
-			return
-		}
-		client.ExecuteFtpCmd("OPTS","UTF8 ON",1)
-		//获取目录信息
-		fmt.Println("List: ")
-		client.ListDir("/", func(ftpFileinfo *Ftp.FTPFile) {
-			fmt.Println(ftpFileinfo)
-		})
 	}
 
 	mItem = PopMenu.Items().AddItem("-")

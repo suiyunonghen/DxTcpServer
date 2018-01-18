@@ -569,8 +569,6 @@ func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		return
 	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
-	//上传文件开始
-	con.WriteObject(&dataTransferStartPkg)
 	finfo, err := os.Lstat(touploadpath)
 	var f *os.File
 	if err == nil{
@@ -597,6 +595,8 @@ func (cmd cmdAPPE)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln("Create File error:", err),false})
 		return
 	}
+	//上传文件开始
+	con.WriteObject(&dataTransferStartPkg)
 	//等待用户上传文件直到完成
 	dataclient := client.datacon.GetUseData().(*dataClientBinds)
 	dataclient.lastFilePos = uint32(client.lastPos)
@@ -622,7 +622,6 @@ func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	}
 	touploadpath:= srv.localPath(srv.buildPath(client.curPath, paramstr)) //要上传到的实际位置
 	//上传文件开始
-	con.WriteObject(&dataTransferStartPkg)
 	finfo, err := os.Lstat(touploadpath)
 	if err == nil{
 		if finfo.IsDir(){
@@ -639,6 +638,7 @@ func (cmd cmdSTOR)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 		con.WriteObject(&ftpResponsePkg{450,fmt.Sprintln("Create File error:", err),false})
 		return
 	}
+	con.WriteObject(&dataTransferStartPkg) //传输开始
 	//等待用户上传文件直到完成
 	dataclient.f = f
 	dataclient.curPosition = 0
@@ -1327,8 +1327,9 @@ func (cmd cmdPASV)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramst
 	select{
 	case  <-srv.dataServer.notifyBindOk:
 		srv.dataServer.notifyBindOk = nil
-	case <-DxCommonLib.After(time.Second*30):
-		srv.dataServer.curCon.Store(0)
+	case <-DxCommonLib.After(time.Second*10):
+		var tmpcon *ServerBase.DxNetConnection=nil
+		srv.dataServer.curCon.Store(tmpcon)
 	}
 	close(srv.dataServer.waitBindChan)
 }
@@ -1345,7 +1346,11 @@ func (cmd cmdCWD)Execute(srv *FTPServer,con *ServerBase.DxNetConnection,paramstr
 		if paramstr[0:1] == "/"{
 			fullPath = filepath.Clean(paramstr)
 		}else if paramstr != "-a"{
-			fullPath = filepath.Clean(client.curPath + "/" + paramstr)
+			if client.curPath != "/"{
+				fullPath = filepath.Clean(client.curPath + "/" + paramstr)
+			}else{
+				fullPath = filepath.Clean(client.curPath + paramstr)
+			}
 		}else{
 			fullPath = filepath.Clean(client.curPath)
 		}
@@ -1543,8 +1548,11 @@ func NewFtpServer()*FTPServer  {
 		}else {
 			var client *ftpClientBinds=nil
 			if cmd.MustLogin(){
-				client = con.GetUseData().(*ftpClientBinds)
-				if !client.isLogin{
+				v := con.GetUseData()
+				if v != nil{
+					client = v.(*ftpClientBinds)
+				}
+				if client == nil || !client.isLogin{
 					con.WriteObject(&unlogPkg)
 					return
 				}
@@ -1565,6 +1573,7 @@ func NewFtpServer()*FTPServer  {
 				}
 			}
 			paramstr := DxCommonLib.FastByte2String(bt)
+			fmt.Println(v)
 			cmd.Execute(result,con,paramstr)
 		}
 	}

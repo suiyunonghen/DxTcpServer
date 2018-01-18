@@ -47,48 +47,65 @@ func (dataClient *ftpDataClient) SubInit() {
 }
 
 func (dataclient *ftpDataClient)CustomRead(con *ServerBase.DxNetConnection,targetdata interface{})bool  {
-	if dataclient.clientbind.waitReadChan != nil{
+	var clientFtp *FtpClient
+	startTime := time.Now()
+	if ftp,ok := dataclient.clientPools.(*FtpClient);ok{
+		clientFtp = ftp
+	}
+
+	if clientFtp == nil && dataclient.clientbind.waitReadChan != nil{
 		select{
 		case <-dataclient.clientbind.waitReadChan:
 		}
 	}
 	dataclient.clientbind.waitReadChan = nil
-	var clientFtp *FtpClient
-	if ftp,ok := dataclient.clientPools.(*FtpClient);ok{
-		clientFtp = ftp
-	}
+
 	if dataclient.clientbind.f == nil{
 		return  true
+	}
+
+	f,isFile := dataclient.clientbind.f.(*os.File)
+	if isFile && clientFtp != nil{
+		if clientFtp.OnDataProgress != nil{
+			clientFtp.OnDataProgress(int(clientFtp.curTotalSize),0,-1,false)
+		}
 	}
 	lreader := io.LimitedReader{con,44*1460}
 	for{
 		rl,err := io.Copy(dataclient.dataBuffer,&lreader)
 		lreader.N = 44*1460
-		if clientFtp != nil{
-			clientFtp.Clientcon.LastValidTime.Store(time.Now())
-		}else{
-			dataclient.clientbind.ftpClient.cmdcon.LastValidTime.Store(time.Now()) //更新一下命令处理连接的操作数据时间
-		}
 		if rl != 0{
+			rl,err = dataclient.dataBuffer.WriteTo(dataclient.clientbind.f)
 			dataclient.clientbind.curPosition += uint32(rl)
-			dataclient.dataBuffer.WriteTo(dataclient.clientbind.f)
 			if err != nil{
 				break
 			}
 		}else{
 			break
 		}
+		curtime := time.Now()
+		if clientFtp != nil{
+			clientFtp.Clientcon.LastValidTime.Store(curtime)
+			if isFile && clientFtp.OnDataProgress != nil{
+				clientFtp.OnDataProgress(int(clientFtp.curTotalSize),int(dataclient.clientbind.curPosition),curtime.Sub(startTime),false)
+			}
+		}else{
+			dataclient.clientbind.ftpClient.cmdcon.LastValidTime.Store(curtime) //更新一下命令处理连接的操作数据时间
+		}
 	}
 	//读取完了，执行关闭，然后释放
-	if f,ok := dataclient.clientbind.f.(*os.File);ok{
+	if isFile{
 		f.Close()
 	}
 	dataclient.clientbind.f = nil
 	if clientFtp != nil{
 		close(clientFtp.transOk)
-		fmt.Println("ftpClient Done")
+		clientFtp.transOk = nil
+		if isFile && clientFtp.OnDataProgress != nil{
+			clientFtp.OnDataProgress(int(clientFtp.curTotalSize),int(dataclient.clientbind.curPosition),time.Now().Sub(startTime),true)
+		}
 	}else{
-		dataclient.clientbind.ftpClient.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintln("OK, received %d bytes",dataclient.clientbind.curPosition),false})
+		dataclient.clientbind.ftpClient.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintf("OK, received %d bytes",dataclient.clientbind.curPosition),false})
 	}
 	dataclient.clientbind.curPosition = 0
 	dataclient.clientbind.ftpClient.lastPos = 0
@@ -173,6 +190,7 @@ func (srv *ftpDataServer)dataClientDisconnect(con *ServerBase.DxNetConnection)  
 //自定义读取文件的接口
 func (srv *ftpDataServer)CustomRead(con *ServerBase.DxNetConnection,targetdata interface{})bool{
 	//这里需要等待con绑定到用户
+	startTime := time.Now()
 	client := con.GetUseData().(*dataClientBinds)
 	if client.waitReadChan != nil{
 		select{
@@ -183,13 +201,27 @@ func (srv *ftpDataServer)CustomRead(con *ServerBase.DxNetConnection,targetdata i
 	if client.f == nil{
 		return  true
 	}
+	var ftpclient *FtpClient
+	v := client.ftpClient.cmdcon.GetUseData()
+	if v != nil{
+		if c,ok := v.(*FtpClient);ok{
+			ftpclient = c
+		}
+	}
+
+	f,isFile := client.f.(*os.File)
+	if isFile && ftpclient != nil{
+		if ftpclient.OnDataProgress != nil{
+			ftpclient.OnDataProgress(int(ftpclient.curTotalSize),0,-1,false)
+		}
+	}
+
 	maxsize := 44*1460
 	buffer := srv.GetBuffer(maxsize)
 	lreader := io.LimitedReader{con,int64(maxsize)}
 	for{
 		rl,err := io.Copy(buffer,&lreader)
 		lreader.N = int64(maxsize)
-		client.ftpClient.cmdcon.LastValidTime.Store(time.Now()) //更新一下命令处理连接的操作数据时间
 		if rl != 0{
 			client.curPosition += uint32(rl)
 			buffer.WriteTo(client.f)
@@ -199,14 +231,28 @@ func (srv *ftpDataServer)CustomRead(con *ServerBase.DxNetConnection,targetdata i
 		}else{
 			break
 		}
+		curtime := time.Now()
+		client.ftpClient.cmdcon.LastValidTime.Store(curtime) //更新一下命令处理连接的操作数据时间
+		if isFile && ftpclient != nil && ftpclient.OnDataProgress != nil{
+			ftpclient.OnDataProgress(int(ftpclient.curTotalSize),int(client.curPosition),curtime.Sub(startTime),false)
+		}
 	}
 	srv.ReciveBuffer(buffer)
 	//读取完了，执行关闭，然后释放
-	if f,ok := client.f.(*os.File);ok{
+	if isFile{
 		f.Close()
 	}
 	client.f = nil
-	client.ftpClient.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintln("OK, received %d bytes",client.curPosition),false})
+
+	if ftpclient != nil{
+		close(ftpclient.transOk)
+		ftpclient.transOk = nil
+		if isFile && ftpclient.OnDataProgress != nil{
+			ftpclient.OnDataProgress(int(ftpclient.curTotalSize),int(client.curPosition),time.Now().Sub(startTime),true)
+		}
+	}else{
+		client.ftpClient.cmdcon.WriteObject(&ftpResponsePkg{226,fmt.Sprintf("OK, received %d bytes",client.curPosition),false})
+	}
 	client.curPosition = 0
 	client.ftpClient.lastPos = 0
 	return true

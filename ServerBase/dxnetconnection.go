@@ -205,6 +205,9 @@ func (con *DxNetConnection)conCustomRead()  {
 		con.ReciveDataLen.AddByteSize(uint32(rlen))
 		con.conHost.AddRecvDataLen(uint32(rlen))
 		for{
+			if reader.IsEmpty(){
+				break
+			}
 			markidx,markOffset := reader.MarkIndex()
 			pok,pkg,err := con.protocol.ParserProtocol(reader,con)//解析出实际的协议宝
 			if err != nil{
