@@ -102,9 +102,29 @@ func (con *DxNetConnection)Read(p []byte)(n int, err error)  {
 	return 0,nil
 }
 
-func (con *DxNetConnection)Write(b []byte)(n int, err error){
+func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 	if !con.UnActive(){
-		return con.con.Write(b)
+		haswrite := 0
+		loger := con.conHost.Logger()
+		lenb := len(wbytes)
+		for {
+			if wln,err := con.con.Write(wbytes[haswrite:lenb]);err != nil{
+				if loger != nil{
+					loger.SetPrefix("[Error]")
+					loger.Println(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+				}
+				con.Close()
+				return haswrite,err
+			}else{
+				con.LastValidTime.Store(time.Now())
+				con.SendDataLen.AddByteSize(uint32(wln))
+				con.conHost.AddSendDataLen(uint32(wln))
+				haswrite+=wln
+				if haswrite == lenb{
+					return haswrite,nil
+				}
+			}
+		}
 	}else{
 		return 0,nil
 	}
