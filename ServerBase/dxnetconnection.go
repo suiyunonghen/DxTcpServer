@@ -402,7 +402,9 @@ func (con *DxNetConnection)conRead()  {
 					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 				}
 			}
-			con.Close()
+			DxCommonLib.PostFunc(func(data ...interface{}) {
+				con.Close() //waitGroup会堵塞
+			})
 			return
 		}
 		if rln < 3{
@@ -444,7 +446,9 @@ func (con *DxNetConnection)conRead()  {
 							loger.Println(fmt.Sprintf("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 						}
 					}
-					con.Close()
+					DxCommonLib.PostFunc(func(data ...interface{}) {
+						con.Close() //直接写会导致waitGroup会堵塞
+					})
 					return
 				}
 				lastread += rln
@@ -466,7 +470,9 @@ func (con *DxNetConnection)conRead()  {
 						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr()))
 					}
 				}
-				con.Close()//无效的数据包
+				DxCommonLib.PostFunc(func(data ...interface{}) {
+					con.Close() //waitGroup会堵塞
+				})
 				return
 			}
 		}
