@@ -13,6 +13,104 @@ import (
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
+type DxDiskSize struct {
+	SizeByte	uint16
+	SizeKB		uint16
+	SizeMB		uint16
+	SizeGB		uint16
+	SizeTB		uint32
+}
+
+func (size *DxDiskSize)Init()  {
+	size.SizeByte = 0
+	size.SizeKB = 0
+	size.SizeGB = 0
+	size.SizeMB = 0
+	size.SizeTB = 0
+}
+
+func (size *DxDiskSize)Add(nsize *DxDiskSize)  {
+	var tmp uint32 = uint32(size.SizeByte + nsize.SizeByte)
+	var reallen = tmp / 1024
+	size.SizeByte = uint16(tmp % 1024)
+
+	tmp = uint32(size.SizeKB+nsize.SizeKB) + reallen
+	reallen = tmp / 1024
+	size.SizeKB = uint16(tmp % 1024)
+
+
+	tmp = uint32(size.SizeMB + nsize.SizeMB) + reallen
+	reallen = tmp / 1024
+	size.SizeMB = uint16(tmp % 1024)
+
+	tmp = uint32(size.SizeGB + nsize.SizeGB) + reallen
+	reallen = tmp / 1024
+	size.SizeGB = uint16(tmp % 1024)
+
+	size.SizeTB = uint32(size.SizeTB + nsize.SizeTB) + reallen
+}
+
+func (size *DxDiskSize)AddByteSize(ByteSize uint32)  {
+	var tmp uint32 = uint32(size.SizeByte) + ByteSize
+	var reallen = tmp / 1024
+	size.SizeByte = uint16(tmp % 1024)
+	if reallen == 0{
+		return
+	}
+	tmp = uint32(size.SizeKB) + reallen
+	reallen = tmp / 1024
+	size.SizeKB = uint16(tmp % 1024)
+	if reallen == 0{
+		return
+	}
+
+	tmp = uint32(size.SizeMB) + reallen
+	reallen = tmp / 1024
+	size.SizeMB = uint16(tmp % 1024)
+	if reallen == 0{
+		return
+	}
+
+	tmp = uint32(size.SizeGB) + reallen
+	reallen = tmp / 1024
+	size.SizeGB = uint16(tmp % 1024)
+	if reallen == 0{
+		return
+	}
+
+	size.SizeTB = uint32(size.SizeTB) + reallen
+}
+
+func (size *DxDiskSize)ToString(useHtmlTag bool)(result string)  {
+	fmtstr := "%d"
+	if useHtmlTag{
+		fmtstr = `<font color="blue"><b>%d</b></font>%s`
+	}
+	if size.SizeTB >0{
+		result = fmt.Sprintf(fmtstr,size.SizeTB,"TB ")
+	}else{
+		result = ""
+	}
+	if useHtmlTag{
+		fmtstr = `%s<font color="blue"><b>%d</b></font>%s`
+	}else{
+		fmtstr = "%s%d%s"
+	}
+	if size.SizeGB > 0{
+		result = fmt.Sprintf(fmtstr,result,size.SizeGB,"GB ")
+	}
+	if size.SizeMB > 0{
+		result = fmt.Sprintf(fmtstr,result,size.SizeMB,"MB ")
+	}
+	if size.SizeKB > 0{
+		result = fmt.Sprintf(fmtstr,result,size.SizeKB,"KB ")
+	}
+	if size.SizeByte > 0{
+		result = fmt.Sprintf(fmtstr,result,size.SizeByte,"Byte ")
+	}
+	return
+}
+
 type GOnRecvDataEvent func(con *DxNetConnection,recvData interface{})
 type GConnectEvent func(con *DxNetConnection)
 type GOnSendDataEvent func(con *DxNetConnection,Data interface{},sendlen int,sendok bool)
@@ -65,7 +163,7 @@ type DxNetConnection struct {
 	LastValidTime		    atomic.Value //最后一次有效数据处理时间
 	LoginTime		    	time.Time //登录时间
 	ConHandle		   		uint
-	unActive				atomic.Value //已经关闭了
+	unActive				int32 //已经关闭了
 	SendDataLen		    	DxDiskSize
 	ReciveDataLen		    DxDiskSize
 	sendDataQueue	      	chan interface{}
@@ -88,11 +186,7 @@ func (con *DxNetConnection)SetUseData(v interface{})  {
 }
 
 func (con *DxNetConnection)UnActive()bool  {
-	v := con.unActive.Load()
-	if v != nil{
-		return v.(bool)
-	}
-	return true
+	return  con.con == nil || con.con  != nil && atomic.CompareAndSwapInt32(&con.unActive,1,1)
 }
 
 func (con *DxNetConnection)Read(p []byte)(n int, err error)  {
@@ -100,6 +194,16 @@ func (con *DxNetConnection)Read(p []byte)(n int, err error)  {
 		return con.con.Read(p)
 	}
 	return 0,nil
+}
+
+func (con *DxNetConnection)addDataSize2Host(data ...interface{})  {
+	isSend := data[0].(bool)
+	size := data[1].(uint32)
+	if isSend{
+		con.conHost.AddSendDataLen(size)
+	}else{
+		con.conHost.AddRecvDataLen(size)
+	}
 }
 
 func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
@@ -113,12 +217,12 @@ func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 					loger.SetPrefix("[Error]")
 					loger.Println(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 				}
-				con.Close()
+				con.PostClose()
 				return haswrite,err
 			}else{
-				con.LastValidTime.Store(time.Now())
+				con.LastValidTime.Store(time.Now().UnixNano())
 				con.SendDataLen.AddByteSize(uint32(wln))
-				con.conHost.AddSendDataLen(uint32(wln))
+				DxCommonLib.PostFunc(con.addDataSize2Host,true,uint32(wln))
 				haswrite+=wln
 				if haswrite == lenb{
 					return haswrite,nil
@@ -131,12 +235,13 @@ func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 }
 
 func (con *DxNetConnection)UnActiveSet(value bool)bool  {
-	v := con.unActive.Load()
-	con.unActive.Store(value)
-	if v != nil{
-		return v.(bool)
+	v := atomic.LoadInt32(&con.unActive)
+	if value{
+		atomic.StoreInt32(&con.unActive,1)
+	}else{
+		atomic.StoreInt32(&con.unActive,0)
 	}
-	return true
+	return v == 1
 }
 
 func (con *DxNetConnection)GetUseData()interface{}  {
@@ -145,7 +250,7 @@ func (con *DxNetConnection)GetUseData()interface{}  {
 
 func (con *DxNetConnection)run(data ...interface{})  {
 	//开始进入获取数据信息
-	con.LastValidTime.Store(time.Now())
+	con.LastValidTime.Store(time.Now().UnixNano())
 	con.recvDataQueue = make(chan interface{},5)
 	//心跳或发送数据
 	DxCommonLib.PostFunc(con.checkHeartorSendData,true) //接收
@@ -175,12 +280,12 @@ func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 				loger.SetPrefix("[Error]")
 				loger.Println(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 			}
-			con.Close()
+			con.PostClose()
 			return false
 		}else{
-			con.LastValidTime.Store(time.Now())
+			con.LastValidTime.Store(time.Now().UnixNano())
 			con.SendDataLen.AddByteSize(uint32(wln))
-			con.conHost.AddSendDataLen(uint32(wln))
+			DxCommonLib.PostFunc(con.addDataSize2Host,true,uint32(wln))
 			haswrite+=wln
 			if haswrite == lenb{
 				return true
@@ -219,11 +324,11 @@ func (con *DxNetConnection)conCustomRead()  {
 					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error()))
 				}
 			}
-			con.Close()
+			con.PostClose()
 			return
 		}
 		con.ReciveDataLen.AddByteSize(uint32(rlen))
-		con.conHost.AddRecvDataLen(uint32(rlen))
+		DxCommonLib.PostFunc(con.addDataSize2Host,false,uint32(rlen))
 		for{
 			if reader.IsEmpty(){
 				break
@@ -280,14 +385,14 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 			case <-timeoutChan:
 				if con.IsClientcon{ //客户端连接
 					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck(){
-						t := con.LastValidTime.Load().(time.Time)
-						if time.Now().Sub(t).Seconds() > 60 { //60秒发送一次心跳
+						t := con.LastValidTime.Load().(int64)
+						if time.Duration(time.Now().UnixNano() - t) >= 50 * time.Second { //60秒发送一次心跳
 							con.conHost.SendHeart(con)
 						}
 					}
 				}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() {
-					t := con.LastValidTime.Load().(time.Time)
-					if time.Now().Sub(t).Seconds() > 120 { //时间间隔的秒数,超过2分钟无心跳，关闭连接
+					t := con.LastValidTime.Load().(int64)
+					if time.Duration(time.Now().UnixNano() - t) >= 110 * time.Second { //时间间隔的秒数,超过2分钟无心跳，关闭连接
 						loger := con.conHost.Logger()
 						if loger != nil {
 							loger.SetPrefix("[Debug]")
@@ -307,9 +412,9 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 				if ok && data != nil{
 					con.conHost.SendData(con,data)
 				}else{
-
 					break sendfor
 				}
+
 			case <-con.selfcancelchan:
 				break sendfor
 			case <-srvcancelChan:
@@ -318,7 +423,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 		}
 	}
 	con.waitg.Done()
-	con.Close()
+	con.PostClose()
 }
 
 func (con *DxNetConnection)Done()<-chan struct{}  {
@@ -328,10 +433,17 @@ func (con *DxNetConnection)Done()<-chan struct{}  {
 	return con.selfcancelchan
 }
 
-func (con *DxNetConnection)Close()  {
+//异步关闭
+func (con *DxNetConnection)PostClose()  {
 	if con.UnActiveSet(true){
 		return
 	}
+	DxCommonLib.PostFunc(func(data ...interface{}) {
+		con.realClose()
+	})
+}
+
+func (con *DxNetConnection)realClose()  {
 	con.con.Close()
 	if con.selfcancelchan != nil{
 		close(con.selfcancelchan)
@@ -361,6 +473,13 @@ func (con *DxNetConnection)Close()  {
 		netpool.Put(con)
 	}
 	host.AfterDisConnected(con)
+}
+
+func (con *DxNetConnection)Close()  {
+	if con.UnActiveSet(true){
+		return
+	}
+	con.realClose()
 }
 
 func (con *DxNetConnection)conRead()  {
@@ -402,9 +521,7 @@ func (con *DxNetConnection)conRead()  {
 					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 				}
 			}
-			DxCommonLib.PostFunc(func(data ...interface{}) {
-				con.Close() //waitGroup会堵塞
-			})
+			con.PostClose()
 			return
 		}
 		if rln < 3{
@@ -446,9 +563,7 @@ func (con *DxNetConnection)conRead()  {
 							loger.Println(fmt.Sprintf("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
 						}
 					}
-					DxCommonLib.PostFunc(func(data ...interface{}) {
-						con.Close() //直接写会导致waitGroup会堵塞
-					})
+					con.PostClose()
 					return
 				}
 				lastread += rln
@@ -458,7 +573,7 @@ func (con *DxNetConnection)conRead()  {
 			}
 			//读取成功，解码数据
 			if obj,ok := encoder.Decode(readbuf[:pkglen]);ok{
-				con.conHost.AddRecvDataLen(uint32(pkglen))
+				DxCommonLib.PostFunc(con.addDataSize2Host,false,uint32(pkglen))
 				con.recvDataQueue <- obj //发送到执行回收事件的解析队列中去
 			}else{
 				loger := con.conHost.Logger()
@@ -470,13 +585,11 @@ func (con *DxNetConnection)conRead()  {
 						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr()))
 					}
 				}
-				DxCommonLib.PostFunc(func(data ...interface{}) {
-					con.Close() //waitGroup会堵塞
-				})
+				con.PostClose()
 				return
 			}
 		}
-		con.LastValidTime.Store(time.Now())
+		con.LastValidTime.Store(time.Now().UnixNano())
 		if timeout != 0{
 			con.con.SetReadDeadline(time.Time{})
 		}
@@ -504,6 +617,9 @@ func (con *DxNetConnection)WriteObjectDirect(obj interface{})bool  {
 }
 
 func (con *DxNetConnection)WriteObject(obj interface{})bool  {
+	if con.conHost == nil{
+		return false
+	}
 	if con.LimitSendPkgCout == 0{
 		return con.conHost.SendData(con,obj)
 	}else{ //放到Chan列表中去发送
@@ -511,11 +627,11 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 		case con.sendDataQueue <- obj:
 				return true
 		case <-con.conHost.Done():
-			con.Close()
+			con.PostClose()
 			return false
 		case <-DxCommonLib.After(time.Millisecond*500):
-				con.Close()
-				return false
+			con.PostClose()
+			return false
 		}
 	}
 }

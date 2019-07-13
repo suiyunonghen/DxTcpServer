@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"encoding/binary"
+	"sync/atomic"
 	"github.com/suiyunonghen/DxCommonLib"
 	"log"
 )
@@ -42,6 +43,7 @@ func (client *DxTcpClient)Done()<-chan struct{}  {
 	return  client.Clientcon.Done()
 }
 
+
 func (client *DxTcpClient)Connect(addr string)error {
 	if client.Active(){
 		client.Close()
@@ -58,7 +60,7 @@ func (client *DxTcpClient)Connect(addr string)error {
 			}else{
 				host = client
 			}
-			client.Clientcon.unActive.Store(false)
+			atomic.StoreInt32(&client.Clientcon.unActive,0)
 			client.Clientcon.con = conn
 			client.Done()
 			client.Clientcon.LoginTime = time.Now() //登录时间
@@ -203,7 +205,7 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 				}
 			}
 			sendok = con.writeBytes(retbytes)
-			con.LastValidTime.Store(time.Now())
+			con.LastValidTime.Store(time.Now().UnixNano())
 		}
 		client.sendBuffer.Reset()
 		if client.sendBuffer.Cap() > int(client.encoder.MaxBufferLen()){

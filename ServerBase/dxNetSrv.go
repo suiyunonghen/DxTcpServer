@@ -14,104 +14,6 @@ import (
 )
 
 
-type DxDiskSize struct {
-	SizeByte	uint16
-	SizeKB		uint16
-	SizeMB		uint16
-	SizeGB		uint16
-	SizeTB		uint32
-}
-
-func (size *DxDiskSize)Init()  {
-	size.SizeByte = 0
-	size.SizeKB = 0
-	size.SizeGB = 0
-	size.SizeMB = 0
-	size.SizeTB = 0
-}
-
-func (size *DxDiskSize)Add(nsize *DxDiskSize)  {
-	var tmp uint32 = uint32(size.SizeByte + nsize.SizeByte)
-	var reallen = tmp / 1024
-	size.SizeByte = uint16(tmp % 1024)
-
-	tmp = uint32(size.SizeKB+nsize.SizeKB) + reallen
-	reallen = tmp / 1024
-	size.SizeKB = uint16(tmp % 1024)
-
-
-	tmp = uint32(size.SizeMB + nsize.SizeMB) + reallen
-	reallen = tmp / 1024
-	size.SizeMB = uint16(tmp % 1024)
-
-	tmp = uint32(size.SizeGB + nsize.SizeGB) + reallen
-	reallen = tmp / 1024
-	size.SizeGB = uint16(tmp % 1024)
-
-	size.SizeTB = uint32(size.SizeTB + nsize.SizeTB) + reallen
-}
-
-func (size *DxDiskSize)AddByteSize(ByteSize uint32)  {
-	var tmp uint32 = uint32(size.SizeByte) + ByteSize
-	var reallen = tmp / 1024
-	size.SizeByte = uint16(tmp % 1024)
-	if reallen == 0{
-		return
-	}
-	tmp = uint32(size.SizeKB) + reallen
-	reallen = tmp / 1024
-	size.SizeKB = uint16(tmp % 1024)
-	if reallen == 0{
-		return
-	}
-
-	tmp = uint32(size.SizeMB) + reallen
-	reallen = tmp / 1024
-	size.SizeMB = uint16(tmp % 1024)
-	if reallen == 0{
-		return
-	}
-
-	tmp = uint32(size.SizeGB) + reallen
-	reallen = tmp / 1024
-	size.SizeGB = uint16(tmp % 1024)
-	if reallen == 0{
-		return
-	}
-
-	size.SizeTB = uint32(size.SizeTB) + reallen
-}
-
-func (size *DxDiskSize)ToString(useHtmlTag bool)(result string)  {
-	fmtstr := "%d"
-	if useHtmlTag{
-		fmtstr = `<font color="blue"><b>%d</b></font>%s`
-	}
-	if size.SizeTB >0{
-		result = fmt.Sprintf(fmtstr,size.SizeTB,"TB ")
-	}else{
-		result = ""
-	}
-	if useHtmlTag{
-		fmtstr = `%s<font color="blue"><b>%d</b></font>%s`
-	}else{
-		fmtstr = "%s%d%s"
-	}
-	if size.SizeGB > 0{
-		result = fmt.Sprintf(fmtstr,result,size.SizeGB,"GB ")
-	}
-	if size.SizeMB > 0{
-		result = fmt.Sprintf(fmtstr,result,size.SizeMB,"MB ")
-	}
-	if size.SizeKB > 0{
-		result = fmt.Sprintf(fmtstr,result,size.SizeKB,"KB ")
-	}
-	if size.SizeByte > 0{
-		result = fmt.Sprintf(fmtstr,result,size.SizeByte,"Byte ")
-	}
-	return
-}
-
 type DxTcpServer struct {
 	DxCommonLib.GDxBaseObject
 	listener        		net.Listener
@@ -230,7 +132,7 @@ func (srv *DxTcpServer)Run()  {
 		srv.waitg.Add(1)
 		dxcon := GetConnection()
 		dxcon.con = conn
-		dxcon.unActive.Store(false)
+		atomic.StoreInt32(&dxcon.unActive,0)
 		dxcon.selfcancelchan = make(chan struct{})
 		dxcon.LimitSendPkgCout = srv.LimitSendPkgCount
 		dxcon.LoginTime = time.Now() //登录时间
