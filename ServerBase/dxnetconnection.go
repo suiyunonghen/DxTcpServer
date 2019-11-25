@@ -386,7 +386,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 				if con.IsClientcon{ //客户端连接
 					if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck(){
 						t := con.LastValidTime.Load().(int64)
-						if time.Duration(time.Now().UnixNano() - t) >= 50 * time.Second { //60秒发送一次心跳
+						if time.Duration(time.Now().UnixNano() - t) >= 30 * time.Second { //30秒发送一次心跳
 							con.conHost.SendHeart(con)
 						}
 					}

@@ -102,11 +102,12 @@ type RpcPkg struct {
 	fWaitchan		chan struct{}		//等待的通道
 	fReturnResult	bool			//是否返回执行结果
 	fresultHandler	MethodHandler	//执行等待结果返回的函数
+	TargetData		interface{}
 }
 
 func (pkg *RpcPkg)SetParams(params map[string]interface{})  {
 	if len(params)!=0{
-		paramRecord := pkg.pkgData.NewRecord("Params")
+		paramRecord := pkg.pkgData.NewRecord("Params",true)
 		for k,v := range params{
 			paramRecord.SetValue(k,v)
 		}
@@ -125,7 +126,7 @@ func (pkg *RpcPkg)Result()*DxValue.DxBaseValue  {
 
 func (pkg *RpcPkg)SetArrParams(params []interface{})  {
 	if len(params)!=0{
-		paramArr := pkg.pkgData.NewArray("Params")
+		paramArr := pkg.pkgData.NewArray("Params",true)
 		for idx,v := range params{
 			paramArr.SetValue(idx,v)
 		}
@@ -192,6 +193,10 @@ func (pkg *RpcPkg)ReSet()  {
 		pkg.fWaitchan = nil
 	}
 	pkg.pkgData.Delete("Err")
+}
+
+func (pkg *RpcPkg)SetError(errmsg string)  {
+	pkg.pkgData.SetString("Err",errmsg)
 }
 
 func (pkg *RpcPkg)ClearParams()  {

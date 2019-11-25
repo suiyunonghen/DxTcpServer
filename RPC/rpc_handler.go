@@ -1,17 +1,20 @@
 package RPC
 
 import (
-	"sync"
+	"fmt"
+	"github.com/suiyunonghen/DxCommonLib"
 	"github.com/suiyunonghen/DxTcpServer/ServerBase"
 	"github.com/suiyunonghen/DxValue"
-	"github.com/suiyunonghen/DxCommonLib"
+	"sync"
 	"time"
 )
 
+type GSendDataEvent func(con *ServerBase.DxNetConnection,Data *RpcPkg,sendlen int,sendok bool)
 type RpcHandler struct {
 	fhandlers					sync.Map			 //客户请求的方法处理
 	fRpcWaitReturnMethods		sync.Map			 //等待返回的RPC方法
 	fclientResponseHandlers		sync.Map			 //自己向客户端请求发送的方法，客户端结果返回处理
+	AfterSendData				GSendDataEvent
 }
 
 
@@ -36,7 +39,7 @@ func (rhandle *RpcHandler)Notify(con *ServerBase.DxNetConnection, MethodName str
 }
 
 
-func (rhandle *RpcHandler)ExecuteWait(con *ServerBase.DxNetConnection, MethodName string,Params *DxValue.DxRecord,WaitTime int32)  {
+func (rhandle *RpcHandler)ExecuteWait(con *ServerBase.DxNetConnection, MethodName string,Params *DxValue.DxRecord,WaitTime int32)(result *DxValue.DxBaseValue,err string)  {
 	methodid := SnowFlakeID()
 	if WaitTime<=0{
 		WaitTime = 5000
@@ -49,13 +52,16 @@ func (rhandle *RpcHandler)ExecuteWait(con *ServerBase.DxNetConnection, MethodNam
 	select {
 	case <-waitchan:
 		//返回了
-		break
+		err = method.pkgData.AsString("Err","")
+		result = method.pkgData.ExtractValue("Result")
 	case <-DxCommonLib.After(time.Millisecond * time.Duration(WaitTime)):
 		//超时了
+		result = nil
 		rhandle.fRpcWaitReturnMethods.Delete(methodid)
-		break
+		err = "TimeOut"
 	}
 	FreeMethod(method)
+	return
 }
 
 
@@ -63,10 +69,10 @@ func (rpHandle *RpcHandler)serverPkg(con *ServerBase.DxNetConnection,recvData in
 	methodpkg := recvData.(*RpcPkg)
 	defer func(){
 		if err := recover();err!=nil{
-			/*methodpkg.pkgData.Delete("Params")
+			methodpkg.pkgData.Delete("Params")
 			methodpkg.pkgData.Delete("Result")
 			methodpkg.fReturnResult = true//立即返回
-			methodpkg.pkgData.SetString("Err",fmt.Sprintf("%v",err))*/
+			methodpkg.pkgData.SetString("Err",fmt.Sprintf("%v",err))
 		}
 	}()
 	methodName := methodpkg.MethodName()
@@ -83,16 +89,21 @@ func (rpHandle *RpcHandler)serverPkg(con *ServerBase.DxNetConnection,recvData in
 		}
 		resultFuncHooked := false
 		if runMethod != nil {
+			willFree := true
 			if runMethod.CloseWaitChan(){
 				pkgdata := runMethod.pkgData
 				runMethod.pkgData = methodpkg.pkgData
 				methodpkg.pkgData = pkgdata
+				//ExecuteWait返回释放
+				willFree = false
 			}else if runMethod.fresultHandler != nil{
 				resultFuncHooked = true
 				runMethod.fresultHandler(con,methodpkg)
 			}
 			rpHandle.fRpcWaitReturnMethods.Delete(methodid)
-			FreeMethod(runMethod)
+			if willFree{
+				FreeMethod(runMethod)
+			}
 		}
 		if !resultFuncHooked{
 			if vresulthandler,ok := rpHandle.fclientResponseHandlers.Load(methodName);ok{
@@ -118,6 +129,7 @@ func (rpHandle *RpcHandler)serverPkg(con *ServerBase.DxNetConnection,recvData in
 		handler(con,methodpkg)
 		if methodpkg.ReturnResult(){
 			methodpkg.pkgData.SetInt("Type",int(RPT_Result)) //作为结果返回
+			methodpkg.pkgData.Delete("Params") //删除参数节点
 			con.WriteObject(methodpkg) //发送结果回去
 		}
 	}else{
@@ -138,6 +150,9 @@ func (rpHandle *RpcHandler)HandleResponse(methodName string,handler MethodHandle
 func (rpHandle *RpcHandler)onSendData(con *ServerBase.DxNetConnection,Data interface{},sendlen int,sendok bool){
 	//回收结果数据
 	resultpkg := Data.(*RpcPkg)
+	if rpHandle.AfterSendData != nil{
+		rpHandle.AfterSendData(con,resultpkg,sendlen,sendok)
+	}
 	if !resultpkg.fHasWait && resultpkg.fresultHandler == nil || resultpkg.pkgData.AsInt("Type",0) == int(RPT_Result) {
 		FreeMethod(resultpkg)
 	}

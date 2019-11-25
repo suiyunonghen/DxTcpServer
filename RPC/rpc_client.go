@@ -1,8 +1,9 @@
 package RPC
 
 import (
-	"github.com/suiyunonghen/DxTcpServer/ServerBase"
 	"github.com/suiyunonghen/DxCommonLib"
+	"github.com/suiyunonghen/DxTcpServer/ServerBase"
+	"github.com/suiyunonghen/DxValue"
 	"time"
 )
 
@@ -21,8 +22,17 @@ func (client *RpcClient)heart(con *ServerBase.DxNetConnection)  {
 }
 
 func (client *RpcClient)disconnect(con *ServerBase.DxNetConnection)  {
+	client.DoReconnect()
+}
+
+func (client *RpcClient)DoReconnect()  {
 	DxCommonLib.PostFunc(client.reConnect)
 }
+
+func (client *RpcClient)ExecuteWait(MethodName string,Params *DxValue.DxRecord,WaitTime int32)(result *DxValue.DxBaseValue,err string){
+	return client.RpcHandler.ExecuteWait(&client.Clientcon,MethodName,Params,WaitTime)
+}
+
 
 func (client *RpcClient)reConnect(data ...interface{})  {
 	frefcount := 1
@@ -63,7 +73,9 @@ func (client *RpcClient)Connect(serverAddr string,maxPkgSize uint16) error {
 		client.ReconRqv = 3
 	}
 	client.SetCoder(&RpcCoder{maxPkgSize})
-	client.OnSendHeart = client.heart
+	if client.OnSendHeart == nil{
+		client.OnSendHeart = client.heart
+	}
 	client.OnRecvData = client.serverPkg
 	client.OnSendData = client.onSendData
 	client.OnClientDisConnected = client.disconnect
