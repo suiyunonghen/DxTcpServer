@@ -41,6 +41,7 @@ type DxTcpServer struct {
 	bufferPool				sync.Pool
 	srvCloseChan			chan struct{}
 	waitg					sync.WaitGroup
+	OnRead					GConReadEvent
 	sync.RWMutex
 }
 type GIterateClientFunc func(con *DxNetConnection)
@@ -52,6 +53,13 @@ func (srv *DxTcpServer)Open(addr string) error {
 	srv.listener = ls
 	srv.isActivetag = 1
 	DxCommonLib.Post(srv)
+	return nil
+}
+
+func (srv *DxTcpServer)BeforePackageRead(con *DxNetConnection)(error)  {
+	if srv.OnRead!=nil{
+		return srv.OnRead(con)
+	}
 	return nil
 }
 

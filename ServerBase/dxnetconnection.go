@@ -113,6 +113,7 @@ func (size *DxDiskSize)ToString(useHtmlTag bool)(result string)  {
 
 type GOnRecvDataEvent func(con *DxNetConnection,recvData interface{})
 type GConnectEvent func(con *DxNetConnection)
+type GConReadEvent func(con *DxNetConnection)error
 type GOnSendDataEvent func(con *DxNetConnection,Data interface{},sendlen int,sendok bool)
 type IConHost interface {
 	GetCoder()IConCoder //编码器
@@ -129,6 +130,7 @@ type IConHost interface {
 	Done()<-chan struct{}
 	CustomRead(con *DxNetConnection,targetdata interface{})bool //自定义读
 	AfterDisConnected(con *DxNetConnection)
+	BeforePackageRead(con *DxNetConnection)(error) //如果返回true,表示进入自定义读，不用解析包
 }
 
 //编码器
@@ -511,6 +513,11 @@ func (con *DxNetConnection)conRead()  {
 		if timeout != 0{
 			con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 		}
+		//判定是否需要常规解包
+		if err = con.conHost.BeforePackageRead(con);err != nil{
+			con.PostClose()
+			return
+		}
 		if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
 			loger := con.conHost.Logger()
 			if loger != nil{
@@ -590,9 +597,6 @@ func (con *DxNetConnection)conRead()  {
 			}
 		}
 		con.LastValidTime.Store(time.Now().UnixNano())
-		if timeout != 0{
-			con.con.SetReadDeadline(time.Time{})
-		}
 	}
 }
 
