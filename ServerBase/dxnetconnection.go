@@ -130,7 +130,8 @@ type IConHost interface {
 	Done()<-chan struct{}
 	CustomRead(con *DxNetConnection,targetdata interface{})bool //自定义读
 	AfterDisConnected(con *DxNetConnection)
-	BeforePackageRead(con *DxNetConnection)(error) //如果返回true,表示进入自定义读，不用解析包
+	BeforePackageRead(con *DxNetConnection)(error) //读取之前处理，可以在这里完全自定义读
+	AfterPackageRead(con *DxNetConnection)(error) //某个包结束之后处理
 }
 
 //编码器
@@ -513,7 +514,6 @@ func (con *DxNetConnection)conRead()  {
 		if timeout != 0{
 			con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 		}
-		//判定是否需要常规解包
 		if err = con.conHost.BeforePackageRead(con);err != nil{
 			con.PostClose()
 			return
@@ -597,6 +597,11 @@ func (con *DxNetConnection)conRead()  {
 			}
 		}
 		con.LastValidTime.Store(time.Now().UnixNano())
+		//判定是否需要常规解包
+		if err = con.conHost.AfterPackageRead(con);err != nil{
+			con.PostClose()
+			return
+		}
 	}
 }
 
@@ -609,7 +614,7 @@ func (con *DxNetConnection)RemoteAddr()string  {
 }
 
 func (con *DxNetConnection)synSendData(data ...interface{})  {
-	con.conHost.SendData(con,data[1])
+	con.conHost.SendData(con,data[0])
 }
 
 func (con *DxNetConnection)WriteObjectSync(obj interface{})  {

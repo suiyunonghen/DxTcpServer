@@ -41,10 +41,11 @@ type DxTcpServer struct {
 	bufferPool				sync.Pool
 	srvCloseChan			chan struct{}
 	waitg					sync.WaitGroup
-	OnRead					GConReadEvent
+	BeforeRead				GConReadEvent
+	AfterRead				GConReadEvent
 	sync.RWMutex
 }
-type GIterateClientFunc func(con *DxNetConnection)
+type GIterateClientFunc func(con *DxNetConnection)bool
 func (srv *DxTcpServer)Open(addr string) error {
 	ls, err := net.Listen("tcp", addr)
 	if nil != err {
@@ -57,8 +58,15 @@ func (srv *DxTcpServer)Open(addr string) error {
 }
 
 func (srv *DxTcpServer)BeforePackageRead(con *DxNetConnection)(error)  {
-	if srv.OnRead!=nil{
-		return srv.OnRead(con)
+	if srv.BeforeRead!=nil{
+		return srv.BeforeRead(con)
+	}
+	return nil
+}
+
+func (srv *DxTcpServer)AfterPackageRead(con *DxNetConnection)(error)  {
+	if srv.AfterRead!=nil{
+		return srv.AfterRead(con)
 	}
 	return nil
 }
@@ -338,7 +346,9 @@ func (srv *DxTcpServer)ClientCount()(result int) {
 func (srv *DxTcpServer)ClientIterate(iteratefunc GIterateClientFunc)  {
 	srv.Lock()
 	for _, c := range srv.clients {
-		iteratefunc(c)
+		if !iteratefunc(c){
+			break
+		}
 	}
 	srv.Unlock()
 }

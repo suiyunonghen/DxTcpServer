@@ -24,7 +24,8 @@ type DxTcpClient struct {
 	OnSendData	GOnSendDataEvent
 	TimeOutSeconds	int32
 	ClientLogger *log.Logger
-	OnRead					GConReadEvent
+	AfterRead					GConReadEvent
+	BeforeRead					GConReadEvent
 	sendBuffer	*bytes.Buffer
 }
 
@@ -45,8 +46,15 @@ func (client *DxTcpClient)Done()<-chan struct{}  {
 }
 
 func (client *DxTcpClient)BeforePackageRead(con *DxNetConnection)(error)  {
-	if client.OnRead!=nil{
-		return client.OnRead(con)
+	if client.BeforeRead!=nil{
+		return client.BeforeRead(con)
+	}
+	return nil
+}
+
+func (client *DxTcpClient)AfterPackageRead(con *DxNetConnection)(error){
+	if client.AfterRead != nil{
+		return client.AfterRead(con)
 	}
 	return nil
 }
