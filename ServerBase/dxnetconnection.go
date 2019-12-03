@@ -233,7 +233,7 @@ func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 			}
 		}
 	}else{
-		return 0,nil
+		return 0,io.EOF
 	}
 }
 
@@ -622,7 +622,10 @@ func (con *DxNetConnection)WriteObjectSync(obj interface{})  {
 }
 
 func (con *DxNetConnection)WriteObjectDirect(obj interface{})bool  {
-	return con.conHost.SendData(con,obj)
+	if con.conHost != nil{
+		return con.conHost.SendData(con,obj)
+	}
+	return false
 }
 
 func (con *DxNetConnection)WriteObject(obj interface{})bool  {

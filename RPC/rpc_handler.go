@@ -38,6 +38,13 @@ func (rhandle *RpcHandler)Notify(con *ServerBase.DxNetConnection, MethodName str
 	return
 }
 
+func (rhandle *RpcHandler)NotifyDirect(con *ServerBase.DxNetConnection, MethodName string,Params *DxValue.DxRecord)  {
+	method := GetMethod(MethodName,true,SnowFlakeID())
+	method.pkgData.SetRecordValue("Params",Params)
+	con.WriteObjectDirect(method)
+	return
+}
+
 
 func (rhandle *RpcHandler)ExecuteWait(con *ServerBase.DxNetConnection, MethodName string,Params *DxValue.DxRecord,WaitTime int32)(result *DxValue.DxBaseValue,err string)  {
 	methodid := SnowFlakeID()
