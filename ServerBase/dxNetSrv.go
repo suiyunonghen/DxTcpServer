@@ -8,8 +8,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"sync"
-	"fmt"
-	"log"
 	"github.com/suiyunonghen/DxCommonLib"
 )
 
@@ -37,7 +35,7 @@ type DxTcpServer struct {
 	MaxDataBufCount			uint16		//最大缓存数量
 	SyncSendData			bool
 	dataBuffer				chan *bytes.Buffer   //缓存列表
-	SrvLogger				*log.Logger
+	SrvLogger				LoggerInterface
 	bufferPool				sync.Pool
 	srvCloseChan			chan struct{}
 	waitg					sync.WaitGroup
@@ -95,7 +93,7 @@ func (srv *DxTcpServer)Close()  {
 	srv.clients = nil
 }
 
-func (srv *DxTcpServer)Logger()*log.Logger  {
+func (srv *DxTcpServer)Logger()LoggerInterface  {
 	return srv.SrvLogger
 }
 
@@ -308,8 +306,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			}else{
 				sendok = false
 				if srv.SrvLogger != nil{
-					srv.SrvLogger.SetPrefix("[Error]")
-					srv.SrvLogger.Println(fmt.Sprintf("协议打包失败：%s",err.Error()))
+					srv.SrvLogger.ErrorMsg("协议打包失败：%s",err.Error())
 				}
 			}
 			srv.ReciveBuffer(sendBuffer)//回收

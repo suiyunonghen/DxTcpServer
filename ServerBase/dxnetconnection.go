@@ -6,7 +6,6 @@ import (
 	"time"
 	"fmt"
 	"io"
-	"log"
 	"bytes"
 	"sync"
 	"sync/atomic"
@@ -19,6 +18,21 @@ type DxDiskSize struct {
 	SizeMB		uint16
 	SizeGB		uint16
 	SizeTB		uint32
+}
+
+type  LoggerInterface interface {
+	DebugMsg(format string,v ...interface{})
+	WarnMsg(format string,v ...interface{})
+	ErrorMsg(format string,v ...interface{})
+	PanicMsg(format string,v ...interface{})
+	DPanicMsg(format string,v ...interface{})
+	InfoMsg(format string,v ...interface{})
+	Debug(msg string,FieldValue interface{})
+	Warn(msg string,FieldValue interface{})
+	Info(msg string,FieldValue interface{})
+	Error(msg string,FieldValue interface{})
+	Panic(msg string,FieldValue interface{})
+	DPanic(msg string,FieldValue interface{})
 }
 
 func (size *DxDiskSize)Init()  {
@@ -124,7 +138,7 @@ type IConHost interface {
 	EnableHeartCheck() bool //是否启用心跳检查
 	SendHeart(con *DxNetConnection) //发送心跳
 	SendData(con *DxNetConnection,DataObj interface{})bool
-	Logger()*log.Logger
+	Logger()LoggerInterface
 	AddRecvDataLen(datalen uint32)
 	AddSendDataLen(datalen uint32)
 	Done()<-chan struct{}
@@ -217,8 +231,7 @@ func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 		for {
 			if wln,err := con.con.Write(wbytes[haswrite:lenb]);err != nil{
 				if loger != nil{
-					loger.SetPrefix("[Error]")
-					loger.Println(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+					loger.ErrorMsg("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 				}
 				con.PostClose()
 				return haswrite,err
@@ -280,8 +293,7 @@ func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 	for {
 		if wln,err := con.con.Write(wbytes[haswrite:lenb]);err != nil{
 			if loger != nil{
-				loger.SetPrefix("[Error]")
-				loger.Println(fmt.Sprintf("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+				loger.ErrorMsg("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 			}
 			con.PostClose()
 			return false
@@ -320,11 +332,10 @@ func (con *DxNetConnection)conCustomRead()  {
 		if e!=nil || rlen==0{
 			loger := con.conHost.Logger()
 			if loger != nil{
-				loger.SetPrefix("[Error]")
 				if con.IsClientcon{
-					loger.Println("读取失败，程序准备断开：",e.Error())
+					loger.ErrorMsg("读取失败，程序准备断开：",e.Error())
 				}else{
-					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error()))
+					loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error())
 				}
 			}
 			con.PostClose()
@@ -341,11 +352,10 @@ func (con *DxNetConnection)conCustomRead()  {
 			if err != nil{
 				loger := con.conHost.Logger()
 				if loger != nil{
-					loger.SetPrefix("[Error]")
 					if con.IsClientcon{
-						loger.Println("读取失败，程序准备断开：",err.Error())
+						loger.ErrorMsg("读取失败，程序准备断开：",err.Error())
 					}else{
-						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+						loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 					}
 				}
 				return
@@ -398,8 +408,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 					if time.Duration(time.Now().UnixNano() - t) >= 110 * time.Second { //时间间隔的秒数,超过2分钟无心跳，关闭连接
 						loger := con.conHost.Logger()
 						if loger != nil {
-							loger.SetPrefix("[Debug]")
-							loger.Println(fmt.Sprintf("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开", con.RemoteAddr()))
+							loger.InfoMsg("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开", con.RemoteAddr())
 						}
 						break recvfor
 					}
@@ -521,11 +530,10 @@ func (con *DxNetConnection)conRead()  {
 		if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
 			loger := con.conHost.Logger()
 			if loger != nil{
-				loger.SetPrefix("[Error]")
 				if con.IsClientcon{
-					loger.Println("读取失败，程序准备断开：",err.Error())
+					loger.ErrorMsg("读取失败，程序准备断开：%s",err.Error())
 				}else{
-					loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+					loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 				}
 			}
 			con.PostClose()
@@ -563,11 +571,10 @@ func (con *DxNetConnection)conRead()  {
 				if rln,err = con.con.Read(readbuf[lastread:pkglen]);err !=nil || rln ==0 {
 					loger := con.conHost.Logger()
 					if loger != nil{
-						loger.SetPrefix("[Error]")
 						if con.IsClientcon{
-							loger.Println("读取失败，程序准备断开：",err.Error())
+							loger.ErrorMsg("读取失败，程序准备断开：",err.Error())
 						}else{
-							loger.Println(fmt.Sprintf("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error()))
+							loger.ErrorMsg("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 						}
 					}
 					con.PostClose()
@@ -585,11 +592,10 @@ func (con *DxNetConnection)conRead()  {
 			}else{
 				loger := con.conHost.Logger()
 				if loger != nil{
-					loger.SetPrefix("[Error]")
 					if con.IsClientcon{
-						loger.Println("无效的数据包，异常，程序准备断开：")
+						loger.ErrorMsg("无效的数据包，异常，程序准备断开：")
 					}else{
-						loger.Println(fmt.Sprintf("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr()))
+						loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr())
 					}
 				}
 				con.PostClose()

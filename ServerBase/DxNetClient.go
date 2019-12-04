@@ -5,11 +5,9 @@ import (
 	"time"
 	"unsafe"
 	"bytes"
-	"fmt"
 	"encoding/binary"
 	"sync/atomic"
 	"github.com/suiyunonghen/DxCommonLib"
-	"log"
 )
 
 type DxTcpClient struct {
@@ -23,7 +21,7 @@ type DxTcpClient struct {
 	AfterClientDisConnected GConnectEvent
 	OnSendData	GOnSendDataEvent
 	TimeOutSeconds	int32
-	ClientLogger *log.Logger
+	ClientLogger LoggerInterface
 	AfterRead					GConReadEvent
 	BeforeRead					GConReadEvent
 	sendBuffer	*bytes.Buffer
@@ -107,7 +105,7 @@ func (client *DxTcpClient)AddSendDataLen(datalen uint32){
 
 }
 
-func (client *DxTcpClient)Logger()*log.Logger  {
+func (client *DxTcpClient)Logger()LoggerInterface  {
 	return client.ClientLogger
 }
 
@@ -235,8 +233,7 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 		}else{
 			sendok = false
 			if client.ClientLogger != nil{
-				client.ClientLogger.SetPrefix("[Error]")
-				client.ClientLogger.Println(fmt.Sprintf("协议打包失败：%s",err.Error()))
+				client.ClientLogger.ErrorMsg("协议打包失败：%s",err.Error())
 			}
 		}
 	}
