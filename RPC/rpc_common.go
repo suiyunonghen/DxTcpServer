@@ -155,12 +155,7 @@ func (pkg *RpcPkg)WaitChan()chan *DxValue.DxRecord {
 
 func (pkg *RpcPkg)CloseWaitChan(waitresult *DxValue.DxRecord)bool  {
 	if pkg.fWaitchan != nil{
-		if waitresult != nil{
-			pkg.fWaitchan <- waitresult
-		}else{
-			close(pkg.fWaitchan)
-		}
-		pkg.fWaitchan = nil
+		pkg.fWaitchan <- waitresult
 		return true
 	}
 	return false

@@ -190,17 +190,20 @@ type DxNetConnection struct {
 	selfcancelchan			chan struct{}
 	IsClientcon		    	bool
 	waitg					sync.WaitGroup
-	useData			    	interface{} //用户数据
+	useData			    	atomic.Value //用户数据
 }
 
 type userDataStruct struct{
 	v  			interface{}
 }
 
-var empStruct = new(struct{})
+type userData struct {
+	value		interface{}
+}
+
 
 func (con *DxNetConnection)SetUseData(v interface{})  {
-	con.useData = v
+	con.useData.Store(userData{value:v})
 }
 
 func (con *DxNetConnection)UnActive()bool  {
@@ -262,7 +265,11 @@ func (con *DxNetConnection)UnActiveSet(value bool)bool  {
 }
 
 func (con *DxNetConnection)GetUseData()interface{}  {
-	return con.useData
+	v := con.useData.Load()
+	if v != nil{
+		return v.(userData).value
+	}
+	return nil
 }
 
 func (con *DxNetConnection)run(data ...interface{})  {

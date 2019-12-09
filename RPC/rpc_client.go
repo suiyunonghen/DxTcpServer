@@ -81,7 +81,7 @@ func (client *RpcClient)Connect(serverAddr string,maxPkgSize uint16) error {
 	client.OnClientDisConnected = client.disconnect
 
 	err := client.DxTcpClient.Connect(serverAddr)
-	if err != nil{
+	if err == nil{
 		client.fServerAddr = serverAddr
 	}
 	return err

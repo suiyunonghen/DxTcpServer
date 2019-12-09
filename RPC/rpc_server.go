@@ -21,6 +21,3 @@ func (server *RpcServer)ListenAndServe(addr string,maxPkgSize uint16) error {
 	server.OnSendData = server.onSendData
 	return server.Open(addr)
 }
-
-
-
