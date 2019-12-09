@@ -41,9 +41,11 @@ func GetMethod(methodName string,IsNotify bool,MethodId int64)*RpcPkg  {
 	var method *RpcPkg
 	if result == nil {
 		method = new(RpcPkg)
-		method.pkgData = DxValue.NewRecord()
 	}else{
 		method = result.(*RpcPkg)
+	}
+	if method.pkgData == nil{
+		method.pkgData = DxValue.NewRecord()
 	}
 	method.pkgData.SetInt64("ID",MethodId)
 	method.fReturnResult = true
@@ -99,7 +101,7 @@ type RpcPkg struct {
 	fId				*DxValue.DxInt64Value
 	fName			*DxValue.DxStringValue
 	fHasWait		bool
-	fWaitchan		chan struct{}		//等待的通道
+	fWaitchan		chan *DxValue.DxRecord		//等待的通道
 	fReturnResult	bool			//是否返回执行结果
 	fresultHandler	MethodHandler	//执行等待结果返回的函数
 	TargetData		interface{}
@@ -143,17 +145,21 @@ func (pkg *RpcPkg)SetResult(result interface{})  {
 	}
 }
 
-func (pkg *RpcPkg)WaitChan()chan struct{}  {
+func (pkg *RpcPkg)WaitChan()chan *DxValue.DxRecord {
 	if pkg.fWaitchan == nil{
-		pkg.fWaitchan = make(chan struct{})
+		pkg.fWaitchan = make(chan *DxValue.DxRecord)
 	}
 	pkg.fHasWait = true
 	return pkg.fWaitchan
 }
 
-func (pkg *RpcPkg)CloseWaitChan()bool  {
+func (pkg *RpcPkg)CloseWaitChan(waitresult *DxValue.DxRecord)bool  {
 	if pkg.fWaitchan != nil{
-		close(pkg.fWaitchan)
+		if waitresult != nil{
+			pkg.fWaitchan <- waitresult
+		}else{
+			close(pkg.fWaitchan)
+		}
 		pkg.fWaitchan = nil
 		return true
 	}
@@ -181,18 +187,20 @@ func (pkg *RpcPkg)ReSet()  {
 	pkg.fId = nil
 	pkg.fHasWait = false
 	pkg.fresultHandler = nil
-	pkg.pkgData.SetInt("Type",int(RPT_UnKnown))
-	pkg.fReturnResult = true //默认都返回执行结果
-	bvalue := pkg.pkgData.AsBaseValue("Params")
-	if bvalue != nil{
-		bvalue.ClearValue(false)
+	if pkg.pkgData != nil{
+		pkg.pkgData.SetInt("Type",int(RPT_UnKnown))
+		bvalue := pkg.pkgData.AsBaseValue("Params")
+		if bvalue != nil{
+			bvalue.ClearValue(false)
+		}
+		pkg.pkgData.Delete("Result")
+		pkg.pkgData.Delete("Err")
 	}
-	pkg.pkgData.Delete("Result")
+	pkg.fReturnResult = true //默认都返回执行结果
 	if pkg.fWaitchan != nil{
 		close(pkg.fWaitchan)
 		pkg.fWaitchan = nil
 	}
-	pkg.pkgData.Delete("Err")
 }
 
 func (pkg *RpcPkg)SetError(errmsg string)  {

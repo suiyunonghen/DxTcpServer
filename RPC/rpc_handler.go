@@ -55,18 +55,25 @@ func (rhandle *RpcHandler)ExecuteWait(con *ServerBase.DxNetConnection, MethodNam
 	method.pkgData.SetRecordValue("Params",Params)
 	waitchan := method.WaitChan()
 	rhandle.fRpcWaitReturnMethods.Store(methodid,method)
-	con.WriteObject(method)
+	if ! con.WriteObject(method){
+		method.CloseWaitChan(nil)
+		FreeMethod(method)
+		return nil,"执行远程请求失败，连接可能已经关闭"
+	}
 	select {
-	case <-waitchan:
+	case resultData,ok := <-waitchan:
 		//返回了
-		err = method.pkgData.AsString("Err","")
-		result = method.pkgData.ExtractValue("Result")
+		if ok{
+			err = resultData.AsString("Err","")
+			result = resultData.ExtractValue("Result")
+		}
 	case <-DxCommonLib.After(time.Millisecond * time.Duration(WaitTime)):
 		//超时了
 		result = nil
 		rhandle.fRpcWaitReturnMethods.Delete(methodid)
 		err = "TimeOut"
 	}
+	method.CloseWaitChan(nil)
 	FreeMethod(method)
 	return
 }
@@ -97,10 +104,11 @@ func (rpHandle *RpcHandler)serverPkg(con *ServerBase.DxNetConnection,recvData in
 		resultFuncHooked := false
 		if runMethod != nil {
 			willFree := true
-			if runMethod.CloseWaitChan(){
-				pkgdata := runMethod.pkgData
-				runMethod.pkgData = methodpkg.pkgData
-				methodpkg.pkgData = pkgdata
+			if runMethod.CloseWaitChan(methodpkg.pkgData){
+				methodpkg.pkgData = nil
+				/*pkgdata := runMethod.pkgData
+				runMethod.pkgData =
+				methodpkg.pkgData = pkgdata*/
 				//ExecuteWait返回释放
 				willFree = false
 			}else if runMethod.fresultHandler != nil{
@@ -161,6 +169,12 @@ func (rpHandle *RpcHandler)onSendData(con *ServerBase.DxNetConnection,Data inter
 		rpHandle.AfterSendData(con,resultpkg,sendlen,sendok)
 	}
 	if !resultpkg.fHasWait && resultpkg.fresultHandler == nil || resultpkg.pkgData.AsInt("Type",0) == int(RPT_Result) {
-		FreeMethod(resultpkg)
+		if !con.IsClientcon{
+			if !sendok{ //编码完成就释放
+				FreeMethod(resultpkg)
+			}
+		}else{
+			FreeMethod(resultpkg)
+		}
 	}
 }

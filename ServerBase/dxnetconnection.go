@@ -181,6 +181,7 @@ type DxNetConnection struct {
 	LoginTime		    	time.Time //登录时间
 	ConHandle		   		uint
 	unActive				int32 //已经关闭了
+	isDelayClosing			int32
 	SendDataLen		    	DxDiskSize
 	ReciveDataLen		    DxDiskSize
 	sendDataQueue	      	chan interface{}
@@ -233,7 +234,7 @@ func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 				if loger != nil{
 					loger.ErrorMsg("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 				}
-				con.PostClose()
+				con.PostClose(0)
 				return haswrite,err
 			}else{
 				con.LastValidTime.Store(time.Now().UnixNano())
@@ -295,7 +296,7 @@ func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 			if loger != nil{
 				loger.ErrorMsg("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 			}
-			con.PostClose()
+			con.PostClose(10)
 			return false
 		}else{
 			con.LastValidTime.Store(time.Now().UnixNano())
@@ -338,7 +339,7 @@ func (con *DxNetConnection)conCustomRead()  {
 					loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error())
 				}
 			}
-			con.PostClose()
+			con.PostClose(10)
 			return
 		}
 		con.ReciveDataLen.AddByteSize(uint32(rlen))
@@ -435,7 +436,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 		}
 	}
 	con.waitg.Done()
-	con.PostClose()
+	con.PostClose(0)
 }
 
 func (con *DxNetConnection)Done()<-chan struct{}  {
@@ -446,16 +447,25 @@ func (con *DxNetConnection)Done()<-chan struct{}  {
 }
 
 //异步关闭
-func (con *DxNetConnection)PostClose()  {
-	if con.UnActiveSet(true){
+func (con *DxNetConnection)PostClose(delayTime	time.Duration)  {
+	if atomic.LoadInt32(&con.unActive) == 1 || atomic.LoadInt32(&con.isDelayClosing) == 1{ //已经关闭了
 		return
 	}
-	DxCommonLib.PostFunc(func(data ...interface{}) {
-		con.realClose()
-	})
+	if atomic.CompareAndSwapInt32(&con.isDelayClosing,0,1){
+		DxCommonLib.PostFunc(func(data ...interface{}) {
+			if delayTime > time.Millisecond{
+				DxCommonLib.Sleep(delayTime)
+			}
+			if atomic.CompareAndSwapInt32(&con.unActive,0,1){
+				con.realClose()
+			}
+		})
+	}
 }
 
 func (con *DxNetConnection)realClose()  {
+	atomic.StoreInt32(&con.unActive,1)
+	atomic.StoreInt32(&con.isDelayClosing,0)
 	con.con.Close()
 	if con.selfcancelchan != nil{
 		close(con.selfcancelchan)
@@ -482,9 +492,11 @@ func (con *DxNetConnection)realClose()  {
 		con.ReciveDataLen.Init()
 		con.SendDataLen.Init()
 		con.conHost = nil
-		netpool.Put(con)
 	}
 	host.AfterDisConnected(con)
+	if !con.IsClientcon{
+		netpool.Put(con)
+	}
 }
 
 func (con *DxNetConnection)Close()  {
@@ -524,7 +536,7 @@ func (con *DxNetConnection)conRead()  {
 			con.con.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 		}
 		if err = con.conHost.BeforePackageRead(con);err != nil{
-			con.PostClose()
+			con.PostClose(10)
 			return
 		}
 		if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
@@ -536,7 +548,7 @@ func (con *DxNetConnection)conRead()  {
 					loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 				}
 			}
-			con.PostClose()
+			con.PostClose(10)
 			return
 		}
 		if rln < 3{
@@ -577,7 +589,7 @@ func (con *DxNetConnection)conRead()  {
 							loger.ErrorMsg("远程客户端连接%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 						}
 					}
-					con.PostClose()
+					con.PostClose(0)
 					return
 				}
 				lastread += rln
@@ -598,14 +610,14 @@ func (con *DxNetConnection)conRead()  {
 						loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开",con.RemoteAddr())
 					}
 				}
-				con.PostClose()
+				con.PostClose(0)
 				return
 			}
 		}
 		con.LastValidTime.Store(time.Now().UnixNano())
 		//判定是否需要常规解包
 		if err = con.conHost.AfterPackageRead(con);err != nil{
-			con.PostClose()
+			con.PostClose(0)
 			return
 		}
 	}
@@ -645,10 +657,10 @@ func (con *DxNetConnection)WriteObject(obj interface{})bool  {
 		case con.sendDataQueue <- obj:
 				return true
 		case <-con.conHost.Done():
-			con.PostClose()
+			con.PostClose(0)
 			return false
 		case <-DxCommonLib.After(time.Millisecond*500):
-			con.PostClose()
+			con.PostClose(0)
 			return false
 		}
 	}

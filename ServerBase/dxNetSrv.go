@@ -267,7 +267,7 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		}
 		if err := coder.Encode(DataObj,sendBuffer);err==nil{
 			if srv.OnSendData == nil && srv.AfterEncodeData != nil{
-				DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,0,false,false)
+				srv.doOnSendData(con,DataObj,0,false,false)
 			}
 			retbytes = sendBuffer.Bytes()
 			lenb := len(retbytes)
@@ -288,7 +288,8 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 			}
 			sendok = con.writeBytes(retbytes)
 		}else if srv.OnSendData == nil && srv.AfterEncodeData != nil{
-			DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,0,false,false)
+			//DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,0,false,false)
+			srv.doOnSendData(con,DataObj,0,false,false)
 		}
 		srv.ReciveBuffer(sendBuffer)//回收
 	}else if con.protocol != nil{
@@ -313,7 +314,8 @@ func (srv *DxTcpServer)SendData(con *DxNetConnection,DataObj interface{})bool  {
 		}
 	}
 	if srv.OnSendData != nil{
-		DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,haswrite,sendok,true)
+		//DxCommonLib.PostFunc(srv.doOnSendData,con,DataObj,haswrite,sendok,true)
+		srv.doOnSendData(con,DataObj,haswrite,sendok,true)
 	}
 	if sendok{
 		atomic.AddUint64(&srv.SendRequestCount,1) //增加回复的请求数量

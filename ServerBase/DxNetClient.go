@@ -238,7 +238,8 @@ func (client *DxTcpClient)SendData(con *DxNetConnection,DataObj interface{})bool
 		}
 	}
 	if client.OnSendData != nil{
-		DxCommonLib.PostFunc(client.doOnSendData,con,DataObj,haswrite,sendok)
+		//DxCommonLib.PostFunc(client.doOnSendData,con,DataObj,haswrite,sendok)
+		client.doOnSendData(con,DataObj,haswrite,sendok)
 	}
 	return sendok
 }
