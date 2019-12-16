@@ -24,6 +24,7 @@ type DxTcpClient struct {
 	ClientLogger LoggerInterface
 	AfterRead					GConReadEvent
 	BeforeRead					GConReadEvent
+	LimitSendPkgCount			uint8  //每个连接限制的发送包的个数，防止发送过快
 	sendBuffer	*bytes.Buffer
 }
 
@@ -76,6 +77,7 @@ func (client *DxTcpClient)Connect(addr string)error {
 			atomic.StoreInt32(&client.Clientcon.unActive,0)
 			client.Clientcon.con = conn
 			client.Done()
+			client.Clientcon.LimitSendPkgCout = client.LimitSendPkgCount//每个连接限制的发送包的个数，防止发送过快
 			client.Clientcon.LoginTime = time.Now() //登录时间
 			client.Clientcon.ConHandle = uint(uintptr(unsafe.Pointer(client)))
 			client.Clientcon.conHost = host
@@ -86,6 +88,7 @@ func (client *DxTcpClient)Connect(addr string)error {
 					client.Clientcon.protocol = protocol
 				}
 			}
+			client.Clientcon.init()
 			result := client.HandleConnectEvent(&client.Clientcon)
 			DxCommonLib.PostFunc(client.Clientcon.run,result)//连接开始执行接收消息和发送消息的处理线程
 			return nil

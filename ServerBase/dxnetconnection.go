@@ -189,6 +189,7 @@ type DxNetConnection struct {
 	LimitSendPkgCout	    uint8
 	selfcancelchan			chan struct{}
 	IsClientcon		    	bool
+	//ConTag					string
 	waitg					sync.WaitGroup
 	useData			    	atomic.Value //用户数据
 }
@@ -230,13 +231,13 @@ func (con *DxNetConnection)addDataSize2Host(data ...interface{})  {
 func (con *DxNetConnection)Write(wbytes []byte)(n int, err error){
 	if !con.UnActive(){
 		haswrite := 0
-		loger := con.conHost.Logger()
+		//loger := con.conHost.Logger()
 		lenb := len(wbytes)
 		for {
 			if wln,err := con.con.Write(wbytes[haswrite:lenb]);err != nil{
-				if loger != nil{
+				/*if loger != nil{
 					loger.ErrorMsg("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
-				}
+				}*/
 				con.PostClose(0)
 				return haswrite,err
 			}else{
@@ -272,7 +273,7 @@ func (con *DxNetConnection)GetUseData()interface{}  {
 	return nil
 }
 
-func (con *DxNetConnection)run(data ...interface{})  {
+func (con *DxNetConnection)init()  {
 	//开始进入获取数据信息
 	con.LastValidTime.Store(time.Now().UnixNano())
 	con.recvDataQueue = make(chan interface{},5)
@@ -282,6 +283,9 @@ func (con *DxNetConnection)run(data ...interface{})  {
 		con.sendDataQueue = make(chan interface{}, con.LimitSendPkgCout)
 		DxCommonLib.PostFunc(con.checkHeartorSendData,false)  //发送
 	}
+}
+
+func (con *DxNetConnection)run(data ...interface{})  {
 	if con.conHost.CustomRead(con,data[0]){
 		return
 	}
@@ -296,13 +300,13 @@ func (con *DxNetConnection)run(data ...interface{})  {
 
 func (con *DxNetConnection)writeBytes(wbytes []byte)bool  {
 	haswrite := 0
-	loger := con.conHost.Logger()
+	//loger := con.conHost.Logger()
 	lenb := len(wbytes)
 	for {
 		if wln,err := con.con.Write(wbytes[haswrite:lenb]);err != nil{
-			if loger != nil{
+			/*if loger != nil{
 				loger.ErrorMsg("写入远程客户端%s失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
-			}
+			}*/
 			con.PostClose(10)
 			return false
 		}else{
@@ -338,14 +342,14 @@ func (con *DxNetConnection)conCustomRead()  {
 	for{
 		rlen,e,_ := reader.ReadAppend()
 		if e!=nil || rlen==0{
-			loger := con.conHost.Logger()
+			/*loger := con.conHost.Logger()
 			if loger != nil{
 				if con.IsClientcon{
 					loger.ErrorMsg("读取失败，程序准备断开：",e.Error())
 				}else{
 					loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),e.Error())
 				}
-			}
+			}*/
 			con.PostClose(10)
 			return
 		}
@@ -358,14 +362,14 @@ func (con *DxNetConnection)conCustomRead()  {
 			markidx,markOffset := reader.MarkIndex()
 			pok,pkg,err := con.protocol.ParserProtocol(reader,con)//解析出实际的协议宝
 			if err != nil{
-				loger := con.conHost.Logger()
+				/*loger := con.conHost.Logger()
 				if loger != nil{
 					if con.IsClientcon{
 						loger.ErrorMsg("读取失败，程序准备断开：",err.Error())
 					}else{
 						loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 					}
-				}
+				}*/
 				return
 			}
 			if !pok{
@@ -390,6 +394,7 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 	if IsRecvFunc{ //接收函数
 		heartTimoutSenconts := con.conHost.HeartTimeOutSeconds()
 		timeoutChan := DxCommonLib.After(time.Second*2)
+		//loger := con.conHost.Logger()
 		recvfor:
 		for{
 			select {
@@ -414,10 +419,9 @@ func (con *DxNetConnection)checkHeartorSendData(data ...interface{})  {
 				}else if heartTimoutSenconts == 0 && con.conHost.EnableHeartCheck() {
 					t := con.LastValidTime.Load().(int64)
 					if time.Duration(time.Now().UnixNano() - t) >= 110 * time.Second { //时间间隔的秒数,超过2分钟无心跳，关闭连接
-						loger := con.conHost.Logger()
-						if loger != nil {
+						/*if loger != nil {
 							loger.InfoMsg("远程客户端连接%s，超过2分钟未获取心跳，连接准备断开", con.RemoteAddr())
-						}
+						}*/
 						break recvfor
 					}
 				}
@@ -547,14 +551,14 @@ func (con *DxNetConnection)conRead()  {
 			return
 		}
 		if rln,err = con.con.Read(buf[:pkgHeadLen]);err !=nil || rln ==0{//获得实际的包长度的数据
-			loger := con.conHost.Logger()
+			/*loger := con.conHost.Logger()
 			if loger != nil{
 				if con.IsClientcon{
 					loger.ErrorMsg("读取失败，程序准备断开：%s",err.Error())
 				}else{
 					loger.ErrorMsg("远程客户端%s，读取失败，程序准备断开：%s",con.RemoteAddr(),err.Error())
 				}
-			}
+			}*/
 			con.PostClose(10)
 			return
 		}

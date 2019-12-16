@@ -1,14 +1,14 @@
 package ServerBase
 
 import (
-	"net"
-	"time"
-	"sync/atomic"
-	"unsafe"
 	"bytes"
 	"encoding/binary"
-	"sync"
 	"github.com/suiyunonghen/DxCommonLib"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
 )
 
 
@@ -34,7 +34,6 @@ type DxTcpServer struct {
 	RecvDataSize			DxDiskSize
 	MaxDataBufCount			uint16		//最大缓存数量
 	SyncSendData			bool
-	dataBuffer				chan *bytes.Buffer   //缓存列表
 	SrvLogger				LoggerInterface
 	bufferPool				sync.Pool
 	srvCloseChan			chan struct{}
@@ -136,7 +135,6 @@ func (srv *DxTcpServer)Run()  {
 	}else{
 		host = srv
 	}
-
 	for{
 		conn, err := srv.listener.Accept()
 		if err != nil {
@@ -157,6 +155,9 @@ func (srv *DxTcpServer)Run()  {
 		}
 		srv.Lock()
 		srv.clients[dxcon.ConHandle] = dxcon
+		if srv.SrvLogger!=nil{
+			srv.SrvLogger.InfoMsg("%d",len(srv.clients))
+		}
 		srv.Unlock()
 		dxcon.protocol = nil
 		if srv.encoder != nil{
@@ -164,6 +165,7 @@ func (srv *DxTcpServer)Run()  {
 				dxcon.protocol = protocol
 			}
 		}
+		dxcon.init()
 		result := srv.HandleConnectEvent(dxcon)
 		DxCommonLib.PostFunc(dxcon.run,result)//连接开始执行接收消息和发送消息的处理线程
 	}
@@ -186,51 +188,14 @@ func (srv *DxTcpServer)SendHeart(con *DxNetConnection)  {
 
 func (srv *DxTcpServer)GetBuffer(bufsize int)(retbuf *bytes.Buffer)  {
 	var ok bool
-	if bufsize <= 0{
-		if srv.encoder == nil{
-			bufsize = 4096
-		}else{
-			bufsize = int(srv.encoder.MaxBufferLen())
-		}
-	}
-	if srv.dataBuffer != nil{
-		select{
-		case retbuf,ok = <-srv.dataBuffer:
-			if !ok{
-				retbuf = nil
-			}
-		default:
-			retbuf = nil
-		}
-	}else if srv.dataBuffer == nil && srv.MaxDataBufCount != 0{
-		srv.dataBuffer = make(chan *bytes.Buffer,srv.MaxDataBufCount)
-		retbuf = bytes.NewBuffer(make([]byte,0,bufsize))
-	}else{
-		retbuf = nil
-	}
-	if retbuf == nil{
-		if retbuf,ok = srv.bufferPool.Get().(*bytes.Buffer);!ok{
-			retbuf = bytes.NewBuffer(make([]byte,0,bufsize))
-		}
+	if retbuf,ok = srv.bufferPool.Get().(*bytes.Buffer);!ok{
+		retbuf = bytes.NewBuffer(make([]byte,0,srv.GetCoder().MaxBufferLen()))
 	}
 	return
 }
 
 func (srv *DxTcpServer)ReciveBuffer(buf *bytes.Buffer)bool  {
 	buf.Reset()
-	if srv.encoder != nil && buf.Cap() > int(srv.encoder.MaxBufferLen()){
-		srv.bufferPool.Put(buf)
-		return true
-	}
-	if srv.dataBuffer != nil{
-		select{
-		case srv.dataBuffer <- buf:
-			//fmt.Println("srv.dataBuffer.len=",len(srv.dataBuffer))
-			return true
-		default:
-			//什么都不做
-		}
-	}
 	srv.bufferPool.Put(buf)
 	return true
 }

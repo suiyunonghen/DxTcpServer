@@ -14,6 +14,8 @@ type RpcClient struct {
 	RpcHandler
 	ReconRqv		byte						//间隔重连的频率，分钟单位
 	fServerAddr 	string
+	isSelfClose		bool						//正常主动关闭
+	reconnectChan	chan struct{}
 	OnReconnect		ReconnectEvent
 }
 
@@ -22,11 +24,26 @@ func (client *RpcClient)heart(con *ServerBase.DxNetConnection)  {
 }
 
 func (client *RpcClient)disconnect(con *ServerBase.DxNetConnection)  {
-	client.DoReconnect()
+	if !client.isSelfClose{
+		client.DoReconnect()
+	}
+}
+
+func (client *RpcClient)Close()  {
+	client.isSelfClose = true
+	if client.reconnectChan != nil{
+		close(client.reconnectChan)
+		client.reconnectChan = nil
+	}else{
+		client.DxTcpClient.Close()
+	}
 }
 
 func (client *RpcClient)DoReconnect()  {
-	DxCommonLib.PostFunc(client.reConnect)
+	if client.reconnectChan == nil{
+		client.reconnectChan = make(chan struct{})
+		DxCommonLib.PostFunc(client.reConnect,client.reconnectChan)
+	}
 }
 
 func (client *RpcClient)ExecuteWait(MethodName string,Params *DxValue.DxRecord,WaitTime int32)(result *DxValue.DxBaseValue,err string){
@@ -36,12 +53,14 @@ func (client *RpcClient)ExecuteWait(MethodName string,Params *DxValue.DxRecord,W
 
 func (client *RpcClient)reConnect(data ...interface{})  {
 	frefcount := 1
+	rechan := data[0].(chan struct{})
 	timeoutchan := DxCommonLib.After(time.Second * 3) //第一次3秒之后重连
 reconnect:
 	for{
 		select {
 		case <-timeoutchan:
 			if err:=client.DxTcpClient.Connect(client.fServerAddr);err==nil{
+				client.isSelfClose = false
 				if client.OnReconnect != nil{ //重连事件
 					client.OnReconnect(nil)
 				}
@@ -50,6 +69,8 @@ reconnect:
 				client.OnReconnect(err)
 			}
 			timeoutchan = DxCommonLib.After(time.Second * 10 * time.Duration(frefcount))
+		case <-rechan:
+			return
 		}
 		if frefcount++;frefcount>6{
 			break
@@ -61,6 +82,8 @@ reconnect:
 		case <-DxCommonLib.After(time.Minute * time.Duration(client.ReconRqv)):
 			frefcount = 1
 			goto reconnect
+		case <-rechan:
+			return
 		}
 	}
 }
@@ -69,6 +92,7 @@ func (client *RpcClient)Connect(serverAddr string,maxPkgSize uint16) error {
 	if client.Active(){
 		return nil
 	}
+	client.isSelfClose = false
 	if client.ReconRqv <= 0{
 		client.ReconRqv = 3
 	}
@@ -79,7 +103,6 @@ func (client *RpcClient)Connect(serverAddr string,maxPkgSize uint16) error {
 	client.OnRecvData = client.serverPkg
 	client.OnSendData = client.onSendData
 	client.OnClientDisConnected = client.disconnect
-
 	err := client.DxTcpClient.Connect(serverAddr)
 	if err == nil{
 		client.fServerAddr = serverAddr

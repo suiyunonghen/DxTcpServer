@@ -27,11 +27,12 @@ type RpcCoder struct {
 	maxBufSize		uint16
 }
 
+func init()  {
+	node,_ = snowflake.NewNode(1)
+}
+
 
 func SnowFlakeID()int64  {
-	if node == nil{
-		node,_ = snowflake.NewNode(1)
-	}
 	id := node.Generate()
 	return id.Int64()
 }
@@ -65,17 +66,22 @@ func FreeMethod(method *RpcPkg)  {
 }
 //命令编码规则
 func (coder *RpcCoder)Encode(obj interface{},buf io.Writer) error {
-	return DxValue.NewEncoder(buf).EncodeRecord(obj.(*RpcPkg).pkgData)
+	encoder := DxValue.NewEncoder(buf)
+	err := encoder.EncodeRecord(obj.(*RpcPkg).pkgData)
+	DxValue.FreeEncoder(encoder)
+	return err
 }
 
 func (coder *RpcCoder)Decode(pkgbytes []byte)(result interface{},ok bool)  {
 	methodpkg := GetMethod("",false,-1)
 	buf := bytes.NewReader(pkgbytes[:])
-	if err := DxValue.NewDecoder(buf).DecodeStrMap(DxMsgPack.CodeUnkonw,methodpkg.pkgData);err!=nil{
+	decoder := DxValue.NewDecoder(buf)
+	if err := decoder.DecodeStrMap(DxMsgPack.CodeUnkonw,methodpkg.pkgData);err!=nil{
 		result = nil
 		FreeMethod(methodpkg)
 		ok = false
 	}
+	DxValue.FreeDecoder(decoder)
 	result = methodpkg
 	ok = true
 	return

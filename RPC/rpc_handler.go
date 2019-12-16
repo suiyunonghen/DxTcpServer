@@ -55,7 +55,7 @@ func (rhandle *RpcHandler)ExecuteWait(con *ServerBase.DxNetConnection, MethodNam
 	method.pkgData.SetRecordValue("Params",Params)
 	waitchan := method.WaitChan()
 	rhandle.fRpcWaitReturnMethods.Store(methodid,method)
-	if ! con.WriteObject(method){
+	if !con.WriteObject(method){
 		FreeMethod(method)
 		return nil,"执行远程请求失败，连接可能已经关闭"
 	}
@@ -101,20 +101,14 @@ func (rpHandle *RpcHandler)serverPkg(con *ServerBase.DxNetConnection,recvData in
 		}
 		resultFuncHooked := false
 		if runMethod != nil {
-			willFree := true
 			if runMethod.CloseWaitChan(methodpkg.pkgData){
 				methodpkg.pkgData = nil
-				//ExecuteWait返回释放
 				resultFuncHooked = true
-				willFree = false
 			}else if runMethod.fresultHandler != nil{
 				resultFuncHooked = true
 				runMethod.fresultHandler(con,methodpkg)
-			}
+		}
 			rpHandle.fRpcWaitReturnMethods.Delete(methodid)
-			if willFree{
-				FreeMethod(runMethod)
-			}
 		}
 		if !resultFuncHooked{
 			if vresulthandler,ok := rpHandle.fclientResponseHandlers.Load(methodName);ok{
