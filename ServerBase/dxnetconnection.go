@@ -177,6 +177,8 @@ type DxNetConnection struct {
 	remoteAddr	            string
 	conHost		    	    IConHost  //连接宿主
 	protocol				IProtocol
+	LimitSendPkgCout	    uint8
+	IsClientcon		    	bool
 	LastValidTime		    atomic.Value //最后一次有效数据处理时间
 	LoginTime		    	time.Time //登录时间
 	ConHandle		   		uint
@@ -186,9 +188,7 @@ type DxNetConnection struct {
 	ReciveDataLen		    DxDiskSize
 	sendDataQueue	      	chan interface{}
 	recvDataQueue		    chan interface{}
-	LimitSendPkgCout	    uint8
 	selfcancelchan			chan struct{}
-	IsClientcon		    	bool
 	//ConTag					string
 	waitg					sync.WaitGroup
 	useData			    	atomic.Value //用户数据

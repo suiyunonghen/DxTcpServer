@@ -155,9 +155,6 @@ func (srv *DxTcpServer)Run()  {
 		}
 		srv.Lock()
 		srv.clients[dxcon.ConHandle] = dxcon
-		if srv.SrvLogger!=nil{
-			srv.SrvLogger.InfoMsg("%d",len(srv.clients))
-		}
 		srv.Unlock()
 		dxcon.protocol = nil
 		if srv.encoder != nil{
